@@ -444,7 +444,7 @@ function Home({ nextNumber, lastRehearsal, goalSeconds, goalProgress,
                 onStart, onHistory, soundEnabled, toggleSound,
                 resumable, onResume, onDiscardActive }) {
   return (
-    <div className="fade-up flex flex-col min-h-screen">
+    <div className="fade-up flex flex-col flex-1 min-h-0">
       <TopBar
         title="DEPARTURE TRAINING"
         right={
@@ -547,12 +547,12 @@ function Setup({ nextNumber, suggestion, onBack, onStart, shakeUpSuggestion }) {
   };
 
   return (
-    <div className="fade-up flex flex-col min-h-screen">
+    <div className="fade-up flex flex-col flex-1 min-h-0">
       <TopBar
         title={`SESSION ${nextNumber}`}
         left={<button onClick={onBack} className="btn-ghost p-2"><ChevronLeft size={22} /></button>}
       />
-      <div className="flex-1 px-6 pb-24 overflow-y-auto">
+      <div className="flex-1 min-h-0 px-6 pb-24 overflow-y-auto">
         <div className="mb-8">
           <div className="text-xs tracking-widest uppercase mb-3" style={{ color: 'var(--ink-muted)' }}>Rehearsal goal</div>
           <input
@@ -725,7 +725,7 @@ function SessionView({ session, soundEnabled, toggleSound, onUpdate, onAbort, on
                   : 'var(--ink)';
 
   return (
-    <div className="fade-up flex flex-col min-h-screen">
+    <div className="fade-up flex flex-col flex-1 min-h-0">
       <TopBar
         title={`SESSION ${session.number}`}
         left={<button onClick={abort} className="btn-ghost p-2"><X size={22} /></button>}
@@ -811,7 +811,7 @@ function Summary({ session, onSave, onDiscard }) {
   const rehearsalDone = session.completedPhases.find(p => p.type === 'rehearsal')?.completed ?? false;
 
   return (
-    <div className="fade-up flex flex-col min-h-screen">
+    <div className="fade-up flex flex-col flex-1 min-h-0">
       <TopBar title="SESSION COMPLETE" />
       <div className="flex-1 px-6 pb-6 flex flex-col">
         <div className="w-14 h-14 rounded-full flex items-center justify-center mx-auto mt-4 mb-4" style={{ background: 'var(--sage)', color: 'var(--surface)' }}>
@@ -907,12 +907,12 @@ function EditSession({ session, onBack, onSave, onDelete, askConfirm }) {
   };
 
   return (
-    <div className="fade-up flex flex-col min-h-screen">
+    <div className="fade-up flex flex-col flex-1 min-h-0">
       <TopBar
         title={`EDIT SESSION ${session.number}`}
         left={<button onClick={onBack} className="btn-ghost p-2"><ChevronLeft size={22} /></button>}
       />
-      <div className="flex-1 px-6 pb-24 overflow-y-auto">
+      <div className="flex-1 min-h-0 px-6 pb-24 overflow-y-auto">
         <div className="mb-6">
           <div className="text-xs tracking-widest uppercase mb-2" style={{ color: 'var(--ink-muted)' }}>Session number</div>
           <input
@@ -1091,12 +1091,12 @@ function HistoryView({ history, goalSeconds, onChangeGoal, askConfirm,
   };
 
   return (
-    <div className="fade-up flex flex-col min-h-screen">
+    <div className="fade-up flex flex-col flex-1 min-h-0">
       <TopBar
         title="HISTORY"
         left={<button onClick={onBack} className="btn-ghost p-2"><ChevronLeft size={22} /></button>}
       />
-      <div className="flex-1 px-5 pb-6 overflow-y-auto scrollbar-thin">
+      <div className="flex-1 min-h-0 px-5 pb-6 overflow-y-auto scrollbar-thin">
 
         <GoalCard goalSeconds={goalSeconds} onChange={onChangeGoal} askConfirm={askConfirm} />
 
@@ -1472,9 +1472,9 @@ export default function App() {
 
   return (
     <div className="app-root">
-      <div className="max-w-md mx-auto">
+      <div className="max-w-md mx-auto w-full flex-1 flex flex-col min-h-0">
         {!loaded ? (
-          <div className="min-h-screen flex items-center justify-center">
+          <div className="flex-1 flex items-center justify-center">
             <div className="serif italic text-xl" style={{ color: 'var(--ink-muted)' }}>Loading…</div>
           </div>
         ) : view === 'home' ? (
