@@ -1,0 +1,97 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #F5EFE3;
+  --bg-warm: #EDE4D1;
+  --surface: #FBF7EF;
+  --ink: #1F1915;
+  --ink-soft: #594A3E;
+  --ink-muted: #8B7B6C;
+  --line: #D9CEB8;
+  --clay: #B8563A;
+  --clay-deep: #8F3F28;
+  --sage: #7A8F6F;
+  --amber: #D88A3A;
+  --gold: #C9A94A;
+  --brick: #A63A2C;
+}
+
+html, body, #root { background: var(--bg); }
+
+.app-root {
+  min-height: 100vh;
+  min-height: 100dvh;
+  font-family: 'IBM Plex Sans', -apple-system, sans-serif;
+  color: var(--ink);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  background-image:
+    radial-gradient(circle at 20% 10%, rgba(184, 86, 58, 0.04), transparent 40%),
+    radial-gradient(circle at 80% 85%, rgba(122, 143, 111, 0.05), transparent 45%);
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.serif { font-family: 'Fraunces', Georgia, serif; font-optical-sizing: auto; letter-spacing: -0.01em; }
+.mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+.tabular { font-variant-numeric: tabular-nums; }
+
+.btn-primary { background: var(--clay); color: #FBF7EF; font-weight: 500; letter-spacing: 0.01em; transition: background 0.15s, transform 0.1s; }
+.btn-primary:hover { background: var(--clay-deep); }
+.btn-primary:active { transform: scale(0.98); }
+.btn-primary:disabled { background: var(--ink-muted); opacity: 0.5; cursor: not-allowed; }
+
+.btn-secondary { background: transparent; color: var(--ink-soft); border: 1px solid var(--line); transition: all 0.15s; }
+.btn-secondary:hover { background: var(--bg-warm); border-color: var(--ink-muted); }
+.btn-secondary:active { transform: scale(0.98); }
+
+.btn-destructive { background: transparent; color: var(--clay); border: 1.5px solid var(--clay); font-weight: 500; transition: all 0.15s; }
+.btn-destructive:hover { background: var(--clay); color: var(--surface); }
+.btn-destructive:active { transform: scale(0.98); }
+
+.btn-ghost { background: transparent; color: var(--ink-soft); transition: color 0.15s; }
+.btn-ghost:hover { color: var(--ink); }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; }
+
+.input-text { background: var(--surface); border: 1px solid var(--line); color: var(--ink); font-family: 'IBM Plex Sans', sans-serif; transition: border-color 0.15s; }
+.input-text:focus { outline: none; border-color: var(--clay); }
+
+.pill { background: var(--surface); border: 1px solid var(--line); color: var(--ink); border-radius: 999px; font-family: 'IBM Plex Mono', monospace; font-weight: 500; transition: all 0.15s; }
+.pill:hover { border-color: var(--clay); }
+
+.dot { width: 7px; height: 7px; border-radius: 999px; background: var(--line); transition: all 0.2s; }
+.dot-current { background: var(--clay); width: 22px; }
+.dot-done { background: var(--sage); }
+
+.progress-track { height: 6px; background: var(--bg-warm); border-radius: 999px; overflow: hidden; position: relative; }
+.progress-fill { height: 100%; background: var(--clay); border-radius: 999px; transition: width 0.4s ease-out; }
+
+.rating-btn {
+  background: var(--surface);
+  border: 1.5px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 6px;
+  transition: all 0.15s;
+  cursor: pointer;
+  text-align: center;
+}
+.rating-btn:active { transform: scale(0.97); }
+
+@keyframes pulse-soft { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+.pulse { animation: pulse-soft 1.6s ease-in-out infinite; }
+
+@keyframes fade-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+.fade-up { animation: fade-up 0.4s ease-out both; }
+
+@keyframes fade-in-modal { from { opacity: 0; } to { opacity: 1; } }
+@keyframes scale-in-modal { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: scale(1); } }
+.modal-backdrop { animation: fade-in-modal 0.18s ease-out both; }
+.modal-card { animation: scale-in-modal 0.2s ease-out both; }
+
+.scrollbar-thin::-webkit-scrollbar { width: 4px; }
+.scrollbar-thin::-webkit-scrollbar-thumb { background: var(--line); border-radius: 2px; }

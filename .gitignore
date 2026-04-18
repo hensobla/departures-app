@@ -1,0 +1,9 @@
+node_modules
+dist
+.DS_Store
+*.local
+.vite
+.claude
+
+# Original artifact source kept locally for reference
+departure-timer.jsx
