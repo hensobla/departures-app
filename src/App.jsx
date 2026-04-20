@@ -224,22 +224,27 @@ function computeNextRehearsal(history, opts = {}) {
 }
 
 /* ---- Goal heuristics ---- */
+function projectToGoal(currentSeconds, goalSeconds) {
+  const out = [];
+  let s = currentSeconds;
+  const MAX = 500;
+  while (out.length < MAX && s < goalSeconds) {
+    let increment;
+    if (s < 300) increment = 30;
+    else if (s < 600) increment = 60;
+    else if (s < 1200) increment = 120;
+    else if (s < 1800) increment = 180;
+    else increment = 300;
+    s += increment;
+    out.push(s);
+  }
+  return out.length >= MAX ? null : out;
+}
+
 function estimateSessionsToGoal(currentSeconds, goalSeconds) {
   if (currentSeconds >= goalSeconds) return 0;
-  let seconds = currentSeconds;
-  let count = 0;
-  const MAX = 500;
-  while (count < MAX && seconds < goalSeconds) {
-    let increment;
-    if (seconds < 300) increment = 30;
-    else if (seconds < 600) increment = 60;
-    else if (seconds < 1200) increment = 120;
-    else if (seconds < 1800) increment = 180;
-    else increment = 300;
-    seconds += increment;
-    count++;
-  }
-  return count >= MAX ? null : count;
+  const path = projectToGoal(currentSeconds, goalSeconds);
+  return path === null ? null : path.length;
 }
 
 function computeGoalProgress(history, goalSeconds) {
@@ -442,9 +447,40 @@ function TopBar({ left, right, title }) {
 /* =====================================================================
    HOME
    ===================================================================== */
-function Home({ nextRehearsalSeconds, lastRehearsal, goalSeconds, goalProgress,
+function Home({ nextRehearsalSeconds, history, goalSeconds, goalProgress,
                 onStart, onHistory, onShowOnboarding, soundEnabled, toggleSound,
                 resumable, onResume, onDiscardActive }) {
+  const sortedHistory = history ? [...history].sort((a, b) => a.number - b.number) : [];
+  const recent = sortedHistory.slice(-3);
+  const currentSecs = recent.length ? recent[recent.length - 1].rehearsalSeconds : 0;
+  const projected = recent.length && currentSecs < goalSeconds
+    ? (projectToGoal(currentSecs, goalSeconds) || []).slice(0, 5)
+    : [];
+
+  let chartData = null;
+  if (recent.length) {
+    const lastNum = recent[recent.length - 1].number;
+    chartData = [
+      ...recent.map(s => ({ x: s.number, histMin: s.rehearsalSeconds / 60, projMin: null })),
+      ...projected.map((secs, i) => ({ x: lastNum + i + 1, histMin: null, projMin: secs / 60 })),
+    ];
+    if (projected.length > 0) {
+      chartData[recent.length - 1].projMin = chartData[recent.length - 1].histMin;
+    }
+  }
+  const goalMin = goalSeconds / 60;
+  const dataMax = chartData
+    ? Math.max(...recent.map(s => s.rehearsalSeconds / 60), ...projected.map(s => s / 60))
+    : 0;
+  const yMax = Math.max(goalMin, dataMax) * 1.15 + 0.5;
+  const bridgeIndex = recent.length - 1;
+
+  const projDot = (props) => {
+    const { cx, cy, index, key, payload } = props;
+    if (payload?.projMin == null || index === bridgeIndex) return <g key={key} />;
+    return <circle key={key} cx={cx} cy={cy} r={3} fill="#FBF7EF" stroke="#B8563A" strokeOpacity={0.6} strokeWidth={1.5} />;
+  };
+
   return (
     <div className="fade-up flex flex-col flex-1 min-h-0">
       <TopBar
@@ -460,37 +496,80 @@ function Home({ nextRehearsalSeconds, lastRehearsal, goalSeconds, goalProgress,
           </button>
         }
       />
-      <div className="flex-1 flex flex-col justify-center px-6 pb-12">
-        <div className="mb-1 text-xs tracking-widest uppercase" style={{ color: 'var(--ink-muted)' }}>Next rehearsal time</div>
-        <div className="serif text-7xl leading-none mb-2 tabular" style={{ fontWeight: 500, color: 'var(--clay)' }}>
-          {formatTimeLong(nextRehearsalSeconds)}
-        </div>
-        <div className="serif italic text-lg mb-8" style={{ color: 'var(--ink-soft)' }}>
-          {lastRehearsal
-            ? <>Last rehearsal was <span className="tabular mono not-italic text-base">{formatTime(lastRehearsal)}</span>.</>
-            : <>Let's begin.</>}
-        </div>
+      <div className="flex-1 min-h-0 flex flex-col px-6 overflow-y-auto">
+        <div className="flex-1 flex flex-col justify-center py-6">
+          <div className="mb-1 text-xs tracking-widest uppercase" style={{ color: 'var(--ink-muted)' }}>Next rehearsal time</div>
+          <div className="serif text-7xl leading-none mb-4 tabular" style={{ fontWeight: 500, color: 'var(--clay)' }}>
+            {formatTimeLong(nextRehearsalSeconds)}
+          </div>
 
-        {/* Goal progress */}
-        <div className="mb-8">
-          <div className="flex items-baseline justify-between mb-2">
-            <div className="text-xs tracking-widest uppercase flex items-center gap-1.5" style={{ color: 'var(--ink-muted)' }}>
-              <Target size={11} /> Goal {formatTimeLong(goalSeconds)}
+          {chartData && (
+            <div className="mb-8">
+              <div className="w-full" style={{ height: 96 }}>
+                <ResponsiveContainer>
+                  <LineChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                    <XAxis dataKey="x" hide type="number" domain={['dataMin', 'dataMax']} />
+                    <YAxis hide domain={[0, yMax]} />
+                    <ReferenceLine y={goalMin} stroke="#7A8F6F" strokeDasharray="3 3" strokeWidth={1} />
+                    {projected.length > 0 && (
+                      <ReferenceLine x={recent[recent.length - 1].number} stroke="#D9CEB8" strokeWidth={1} />
+                    )}
+                    <Line
+                      type="monotone"
+                      dataKey="projMin"
+                      stroke="#B8563A"
+                      strokeOpacity={0.5}
+                      strokeWidth={1.5}
+                      strokeDasharray="4 4"
+                      dot={projDot}
+                      isAnimationActive={false}
+                      connectNulls={false}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="histMin"
+                      stroke="#B8563A"
+                      strokeWidth={1.5}
+                      dot={{ r: 3, fill: '#B8563A', stroke: 'none' }}
+                      isAnimationActive={false}
+                      connectNulls={false}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="mt-2 flex items-center gap-4 text-xs" style={{ color: 'var(--ink-muted)' }}>
+                <div className="flex items-center gap-1.5">
+                  <span style={{ width: 12, height: 2, background: '#B8563A', borderRadius: 1 }} />
+                  Recent
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span style={{ width: 12, height: 0, borderTop: '1.5px dashed #B8563A', opacity: 0.6 }} />
+                  Projected
+                </div>
+              </div>
             </div>
-            <div className="serif tabular text-sm" style={{ color: 'var(--ink-soft)' }}>
-              {goalProgress.percent}%
+          )}
+
+          <div className="mb-2">
+            <div className="flex items-baseline justify-between mb-2">
+              <div className="text-xs tracking-widest uppercase flex items-center gap-1.5" style={{ color: 'var(--ink-muted)' }}>
+                <Target size={11} /> Goal {formatTimeLong(goalSeconds)}
+              </div>
+              <div className="serif tabular text-sm" style={{ color: 'var(--ink-soft)' }}>
+                {goalProgress.percent}%
+              </div>
             </div>
-          </div>
-          <div className="progress-track mb-3">
-            <div className="progress-fill" style={{ width: `${goalProgress.percent}%` }} />
-          </div>
-          <div className="serif italic text-sm" style={{ color: 'var(--ink-soft)' }}>
-            {estimateText(goalProgress)}
+            <div className="progress-track mb-3">
+              <div className="progress-fill" style={{ width: `${goalProgress.percent}%` }} />
+            </div>
+            <div className="serif italic text-sm" style={{ color: 'var(--ink-soft)' }}>
+              {estimateText(goalProgress)}
+            </div>
           </div>
         </div>
 
         {resumable && (
-          <div className="card p-4 mb-6" style={{ borderColor: 'var(--amber)', background: '#FDF6EA' }}>
+          <div className="card p-4 mb-4" style={{ borderColor: 'var(--amber)', background: '#FDF6EA' }}>
             <div className="flex items-start gap-3">
               <Clock size={18} style={{ color: 'var(--amber)', marginTop: 2 }} />
               <div className="flex-1">
@@ -507,8 +586,10 @@ function Home({ nextRehearsalSeconds, lastRehearsal, goalSeconds, goalProgress,
           </div>
         )}
 
-        <button onClick={onStart} className="btn-primary w-full py-5 rounded-full text-lg mb-3">Start session</button>
-        <button onClick={onHistory} className="btn-ghost py-3 text-sm">View history →</button>
+        <div className="shrink-0 pb-6 pt-2">
+          <button onClick={onStart} className="btn-primary w-full py-5 rounded-full text-lg mb-3">Start session</button>
+          <button onClick={onHistory} className="btn-ghost py-3 text-sm w-full">View history →</button>
+        </div>
       </div>
     </div>
   );
@@ -1532,9 +1613,6 @@ export default function App() {
   }, [soundEnabled, goalSeconds, loaded]);
 
   const nextNumber = history ? (history.length ? Math.max(...history.map(s => s.number)) + 1 : 1) : 1;
-  const lastRehearsal = history && history.length
-    ? [...history].sort((a, b) => b.number - a.number)[0].rehearsalSeconds
-    : null;
   const goalProgress = computeGoalProgress(history || [], goalSeconds);
   const autoSuggestion = computeNextRehearsal(history || []);
   // Always have a shake-up fallback available if the auto-suggestion isn't already one
@@ -1731,7 +1809,7 @@ export default function App() {
         ) : view === 'home' ? (
           <Home
             nextRehearsalSeconds={autoSuggestion.seconds}
-            lastRehearsal={lastRehearsal}
+            history={history}
             goalSeconds={goalSeconds}
             goalProgress={goalProgress}
             onStart={handleStartSetup}
