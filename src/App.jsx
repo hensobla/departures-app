@@ -1163,6 +1163,30 @@ function HistoryView({ history, goalSeconds, onChangeGoal, askConfirm,
     return <circle key={index} cx={cx} cy={cy} r={3.5} fill={color} stroke="none" />;
   };
 
+  // Stroke gradient: clay where we have data, brick-red where the line is
+  // bridging across a gap of empty days. 5% fade on each transition.
+  const lineStops = (() => {
+    if (chartData.length === 0) return [];
+    const CLAY = '#B8563A';
+    const RED = '#A63A2C';
+    const FADE_HALF = 2.5;
+    const N = chartData.length;
+    const xPct = (i) => (N <= 1 ? 0 : (i / (N - 1)) * 100);
+    const colorAt = (i) => (chartData[i].minutes != null ? CLAY : RED);
+    const stops = [{ offset: 0, color: colorAt(0) }];
+    for (let i = 1; i < N; i++) {
+      const prev = colorAt(i - 1);
+      const cur = colorAt(i);
+      if (cur !== prev) {
+        const bx = (xPct(i - 1) + xPct(i)) / 2;
+        stops.push({ offset: Math.max(0, bx - FADE_HALF), color: prev });
+        stops.push({ offset: Math.min(100, bx + FADE_HALF), color: cur });
+      }
+    }
+    stops.push({ offset: 100, color: colorAt(N - 1) });
+    return stops;
+  })();
+
   return (
     <div className="fade-up flex flex-col flex-1 min-h-0">
       <TopBar
@@ -1203,6 +1227,13 @@ function HistoryView({ history, goalSeconds, onChangeGoal, askConfirm,
             <div style={{ width: '100%', height: 200 }}>
               <ResponsiveContainer>
                 <LineChart data={chartData} margin={{ top: 8, right: 12, left: -24, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="trendGradient" x1="0" y1="0" x2="1" y2="0">
+                      {lineStops.map((s, i) => (
+                        <stop key={i} offset={`${s.offset}%`} stopColor={s.color} />
+                      ))}
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid stroke="#D9CEB8" strokeDasharray="2 4" vertical={false} />
                   <XAxis
                     dataKey="date"
@@ -1239,11 +1270,11 @@ function HistoryView({ history, goalSeconds, onChangeGoal, askConfirm,
                   <Line
                     type="monotone"
                     dataKey="minutes"
-                    stroke="#B8563A"
+                    stroke="url(#trendGradient)"
                     strokeWidth={1.5}
                     dot={renderDot}
                     activeDot={{ r: 6 }}
-                    connectNulls={false}
+                    connectNulls={true}
                     isAnimationActive={false}
                   />
                 </LineChart>
