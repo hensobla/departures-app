@@ -1451,7 +1451,7 @@ function Onboarding({ onClose }) {
         </div>
       </div>
       <div className="px-6 pt-4">
-        <button onClick={next} className="btn-primary w-full py-3.5 rounded-xl">
+        <button onClick={next} className="btn-primary w-full py-4 rounded-full">
           {isLast ? 'Begin' : 'Next'}
         </button>
       </div>
