@@ -223,7 +223,25 @@ function computeNextRehearsal(history, opts = {}) {
   return { seconds: lastSecs + increment, reason, kind: 'step-up' };
 }
 
-/* ---- Goal heuristics (uses only acceptable sessions for trend) ---- */
+/* ---- Goal heuristics ---- */
+function estimateSessionsToGoal(currentSeconds, goalSeconds) {
+  if (currentSeconds >= goalSeconds) return 0;
+  let seconds = currentSeconds;
+  let count = 0;
+  const MAX = 500;
+  while (count < MAX && seconds < goalSeconds) {
+    let increment;
+    if (seconds < 300) increment = 30;
+    else if (seconds < 600) increment = 60;
+    else if (seconds < 1200) increment = 120;
+    else if (seconds < 1800) increment = 180;
+    else increment = 300;
+    seconds += increment;
+    count++;
+  }
+  return count >= MAX ? null : count;
+}
+
 function computeGoalProgress(history, goalSeconds) {
   if (!history || history.length === 0) {
     return { current: 0, percent: 0, estimate: null, trend: 'no-data' };
@@ -236,39 +254,22 @@ function computeGoalProgress(history, goalSeconds) {
     return { current, percent: 100, estimate: 0, trend: 'reached' };
   }
 
-  // Filter to sessions that count as real progress
   const progressSessions = sorted.filter(s => isAcceptable(s.rating));
   if (progressSessions.length < 3) {
     return { current, percent, estimate: null, trend: 'no-data' };
   }
 
-  // Compound (exponential) growth model. The trainer's chart shows that growth
-  // rate accelerates with current length — a linear "seconds-per-session" model
-  // dramatically overestimates the remaining sessions at lower lengths because
-  // it ignores that each future session adds a percentage, not a fixed amount.
-  const window = progressSessions.slice(-5);
-  const first = window[0].rehearsalSeconds;
-  const last  = window[window.length - 1].rehearsalSeconds;
-  const steps = window.length - 1;
-
-  if (last <= first) {
-    return { current, percent, estimate: null, trend: 'flat' };
-  }
-
-  const growthRate = Math.pow(last / first, 1 / steps); // r per session
-  const remaining  = Math.ceil(Math.log(goalSeconds / current) / Math.log(growthRate));
-  return { current, percent, estimate: remaining, trend: 'increasing', growthRate };
+  const estimate = estimateSessionsToGoal(current, goalSeconds);
+  return { current, percent, estimate, trend: 'increasing' };
 }
 
-function estimateText({ trend, estimate, growthRate }) {
+function estimateText({ trend, estimate }) {
   if (trend === 'no-data') return 'A few more rated sessions and an estimate will appear.';
   if (trend === 'reached') return 'Goal reached. Set a higher one if you like.';
-  if (trend === 'flat') return 'Recent sessions haven\'t increased — try a small bump next time.';
   if (trend === 'increasing') {
-    const pct = growthRate ? Math.round((growthRate - 1) * 100) : null;
-    const rateNote = pct ? ` (~${pct}% growth per session)` : '';
-    if (estimate === 1) return `About 1 more session at recent pace${rateNote}.`;
-    return `About ${estimate} more sessions at recent pace${rateNote}.`;
+    if (estimate === null) return '';
+    if (estimate === 1) return 'About 1 more session to reach your goal.';
+    return `About ${estimate} more sessions to reach your goal.`;
   }
   return '';
 }
