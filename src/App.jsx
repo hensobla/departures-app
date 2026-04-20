@@ -509,9 +509,6 @@ function Home({ nextNumber, lastRehearsal, goalSeconds, goalProgress,
         <button onClick={onStart} className="btn-primary w-full py-5 rounded-full text-lg mb-3">Start session</button>
         <button onClick={onHistory} className="btn-ghost py-3 text-sm">View history →</button>
       </div>
-      <div className="px-6 pb-8 text-xs leading-relaxed" style={{ color: 'var(--ink-muted)' }}>
-        Tip: set auto-lock to "Never" in iOS Settings before a session so the screen stays on.
-      </div>
     </div>
   );
 }
