@@ -1366,6 +1366,29 @@ function Onboarding({ onClose }) {
               ))}
             </div>
           )}
+          {screen.key === 'welcome' && (
+            <div className="mt-6">
+              <div className="flex items-center gap-3">
+                <div className="serif tabular text-sm" style={{ color: 'var(--ink-muted)' }}>15s</div>
+                <div className="flex-1">
+                  <svg viewBox="0 0 160 50" className="w-full block" style={{ height: 50 }} preserveAspectRatio="none">
+                    <path
+                      d="M 3 42 C 60 42, 100 8, 157 8"
+                      fill="none"
+                      stroke="var(--clay)"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  </svg>
+                </div>
+                <div className="serif tabular text-sm" style={{ color: 'var(--ink-muted)' }}>1h</div>
+              </div>
+              <div className="serif italic text-sm mt-2" style={{ color: 'var(--ink-soft)' }}>
+                From a few seconds to a full hour.
+              </div>
+            </div>
+          )}
           {screen.key === 'flow' && (
             <div className="mt-6">
               <div className="flex items-center gap-1">
