@@ -3,7 +3,8 @@ import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, CartesianGrid, Tool
 import {
   Play, Pause, SkipForward, X, Volume2, VolumeX, Shuffle,
   ChevronLeft, RotateCcw, Check, Download, Upload, Clock, ChevronRight,
-  Pencil, Trash2, Plus, Target, TrendingUp, TrendingDown, Info
+  Pencil, Trash2, Plus, Target, TrendingUp, TrendingDown, Info,
+  DoorOpen, Heart, Share, MoreVertical
 } from 'lucide-react';
 
 /* =====================================================================
@@ -1321,9 +1322,11 @@ function Onboarding({ onClose }) {
     screens.push({
       key: 'install',
       title: 'Make it feel like an app.',
-      body: isIOS
-        ? "In Safari, tap the Share button at the bottom of the screen, then choose Add to Home Screen. You'll get a real app icon and a full-screen experience."
-        : "Tap your browser's menu, then choose Install app or Add to Home Screen. You'll get a real app icon and a full-screen experience.",
+      body: isIOS ? (
+        <>In Safari, tap the Share <Share size={14} className="inline align-text-bottom mx-0.5" /> button at the bottom of the screen, then choose Add to Home Screen. You'll get a real app icon and a full-screen experience.</>
+      ) : (
+        <>Tap your browser's menu <MoreVertical size={14} className="inline align-text-bottom mx-0.5" />, then choose Install app or Add to Home Screen. You'll get a real app icon and a full-screen experience.</>
+      ),
     });
   }
 
@@ -1361,6 +1364,65 @@ function Onboarding({ onClose }) {
                   <div style={{ color: 'var(--ink-muted)' }}>{r.desc}</div>
                 </div>
               ))}
+            </div>
+          )}
+          {screen.key === 'flow' && (
+            <div className="mt-6">
+              <div className="flex items-center gap-1">
+                {[
+                  { type: 'out', width: 28 },
+                  { type: 'in', width: 36 },
+                  { type: 'out', width: 28 },
+                  { type: 'in', width: 36 },
+                  { type: 'out', width: 28 },
+                  { type: 'in', width: 36 },
+                  { type: 'out', width: 28 },
+                  { type: 'out', width: 80 },
+                ].map((b, i) => (
+                  <div key={i} style={{
+                    height: 28,
+                    width: b.width,
+                    background: b.type === 'out' ? 'var(--clay)' : 'var(--bg-warm)',
+                    borderLeft: b.type === 'in' ? '3px solid var(--sage)' : undefined,
+                    borderRadius: 6,
+                  }} />
+                ))}
+              </div>
+              <div className="serif italic text-sm mt-3" style={{ color: 'var(--ink-soft)' }}>
+                A few short goodbyes, then one longer one.
+              </div>
+              <div className="mt-4 flex items-center gap-4 text-xs" style={{ color: 'var(--ink-soft)' }}>
+                <div className="flex items-center gap-1.5">
+                  <div className="flex items-center justify-center" style={{ width: 16, height: 16, background: 'var(--clay)', borderRadius: 4 }}>
+                    <DoorOpen size={10} style={{ color: 'var(--surface)' }} />
+                  </div>
+                  <span>Step out</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="flex items-center justify-center" style={{ width: 16, height: 16, background: 'var(--bg-warm)', borderLeft: '3px solid var(--sage)', borderRadius: 4 }}>
+                    <Heart size={9} style={{ color: 'var(--sage)' }} />
+                  </div>
+                  <span>Stay calm with your dog.</span>
+                </div>
+              </div>
+            </div>
+          )}
+          {screen.key === 'goal' && (
+            <div className="mt-6">
+              <div className="flex items-baseline justify-between mb-2">
+                <div className="text-xs tracking-widest uppercase flex items-center gap-1.5" style={{ color: 'var(--ink-muted)' }}>
+                  <Target size={11} /> Goal 1h
+                </div>
+                <div className="serif tabular text-sm" style={{ color: 'var(--ink-soft)' }}>
+                  40%
+                </div>
+              </div>
+              <div className="progress-track">
+                <div className="progress-fill" style={{ width: '40%' }} />
+              </div>
+              <div className="serif italic text-sm mt-2" style={{ color: 'var(--ink-soft)' }}>
+                This is the bar you'll see on the home screen.
+              </div>
             </div>
           )}
         </div>
