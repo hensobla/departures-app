@@ -441,7 +441,7 @@ function TopBar({ left, right, title }) {
 /* =====================================================================
    HOME
    ===================================================================== */
-function Home({ nextNumber, lastRehearsal, goalSeconds, goalProgress,
+function Home({ nextRehearsalSeconds, lastRehearsal, goalSeconds, goalProgress,
                 onStart, onHistory, onShowOnboarding, soundEnabled, toggleSound,
                 resumable, onResume, onDiscardActive }) {
   return (
@@ -460,9 +460,9 @@ function Home({ nextNumber, lastRehearsal, goalSeconds, goalProgress,
         }
       />
       <div className="flex-1 flex flex-col justify-center px-6 pb-12">
-        <div className="mb-1 text-xs tracking-widest uppercase" style={{ color: 'var(--ink-muted)' }}>Up next</div>
-        <div className="serif text-7xl leading-none mb-2" style={{ fontWeight: 500 }}>
-          Session <span style={{ color: 'var(--clay)' }}>{nextNumber}</span>
+        <div className="mb-1 text-xs tracking-widest uppercase" style={{ color: 'var(--ink-muted)' }}>Next rehearsal time</div>
+        <div className="serif text-7xl leading-none mb-2 tabular" style={{ fontWeight: 500, color: 'var(--clay)' }}>
+          {formatTimeLong(nextRehearsalSeconds)}
         </div>
         <div className="serif italic text-lg mb-8" style={{ color: 'var(--ink-soft)' }}>
           {lastRehearsal
@@ -1729,7 +1729,7 @@ export default function App() {
           <Onboarding onClose={dismissOnboarding} />
         ) : view === 'home' ? (
           <Home
-            nextNumber={nextNumber}
+            nextRehearsalSeconds={autoSuggestion.seconds}
             lastRehearsal={lastRehearsal}
             goalSeconds={goalSeconds}
             goalProgress={goalProgress}
