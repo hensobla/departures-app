@@ -3,7 +3,7 @@ import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, CartesianGrid, Tool
 import {
   Play, Pause, SkipForward, X, Volume2, VolumeX, Shuffle,
   ChevronLeft, RotateCcw, Check, Download, Upload, Clock, ChevronRight,
-  Pencil, Trash2, Plus, Target, TrendingUp, TrendingDown
+  Pencil, Trash2, Plus, Target, TrendingUp, TrendingDown, Info
 } from 'lucide-react';
 
 /* =====================================================================
@@ -441,12 +441,17 @@ function TopBar({ left, right, title }) {
    HOME
    ===================================================================== */
 function Home({ nextNumber, lastRehearsal, goalSeconds, goalProgress,
-                onStart, onHistory, soundEnabled, toggleSound,
+                onStart, onHistory, onShowOnboarding, soundEnabled, toggleSound,
                 resumable, onResume, onDiscardActive }) {
   return (
     <div className="fade-up flex flex-col flex-1 min-h-0">
       <TopBar
         title="DEPARTURE TRAINING"
+        left={
+          <button onClick={onShowOnboarding} className="btn-ghost p-2" aria-label="How this works">
+            <Info size={20} />
+          </button>
+        }
         right={
           <button onClick={toggleSound} className="btn-ghost p-2" aria-label="Toggle sound">
             {soundEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
@@ -1274,6 +1279,110 @@ function HistoryView({ history, goalSeconds, onChangeGoal, askConfirm,
 }
 
 /* =====================================================================
+   ONBOARDING
+   ===================================================================== */
+function Onboarding({ onClose }) {
+  const [step, setStep] = useState(0);
+
+  const isStandalone =
+    window.matchMedia('(display-mode: standalone)').matches ||
+    window.navigator.standalone === true;
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+
+  const screens = [
+    {
+      key: 'welcome',
+      title: 'A calm goodbye, one rehearsal at a time.',
+      body:
+        "This app helps you guide your dog through separation anxiety with short, low-stress practice departures. You'll work in small steps, watch the wins add up, and end up with a dog who's okay being home alone.",
+    },
+    {
+      key: 'flow',
+      title: 'Step out, come back, breathe, repeat.',
+      body:
+        "A session is a short series of mini-departures. For each warm-up you actually step out the door for a few seconds, then come back and spend about a minute hanging out calmly with your dog. After the warm-ups comes one longer rehearsal — same idea, just a bigger goodbye. The app paces it; you focus on staying neutral.",
+    },
+    {
+      key: 'rating',
+      title: 'Be honest. The rating shapes what comes next.',
+      body:
+        "After each rehearsal, pick a rating based on how much your dog barked. Great or Good means you're ready to push a little further next time. Fair or Bad means today was too much — ease back, no guilt.",
+      ratings: true,
+    },
+    {
+      key: 'goal',
+      title: 'Pick a duration to build toward.',
+      body:
+        "Your goal is how long you ultimately want your dog to be okay alone — an hour is a good starting target. The chart on the History screen shows how you're tracking. Tap the i in the top corner of the home screen anytime to revisit this guide.",
+    },
+  ];
+
+  if (!isStandalone) {
+    screens.push({
+      key: 'install',
+      title: 'Make it feel like an app.',
+      body: isIOS
+        ? "In Safari, tap the Share button at the bottom of the screen, then choose Add to Home Screen. You'll get a real app icon and a full-screen experience."
+        : "Tap your browser's menu, then choose Install app or Add to Home Screen. You'll get a real app icon and a full-screen experience.",
+    });
+  }
+
+  const isLast = step === screens.length - 1;
+  const screen = screens[step];
+  const next = () => (isLast ? onClose() : setStep(step + 1));
+
+  return (
+    <div className="fade-up flex flex-col flex-1 min-h-0">
+      <TopBar
+        title=""
+        right={
+          <button onClick={onClose} className="btn-ghost text-sm px-2 py-2" aria-label="Skip onboarding">
+            Skip
+          </button>
+        }
+      />
+      <div className="flex-1 min-h-0 px-6 overflow-y-auto scrollbar-thin">
+        <div className="card p-6 fade-up" key={screen.key}>
+          <div className="serif text-3xl mb-4 leading-tight" style={{ fontWeight: 500 }}>
+            {screen.title}
+          </div>
+          <div className="text-base leading-relaxed" style={{ color: 'var(--ink-soft)' }}>
+            {screen.body}
+          </div>
+          {screen.ratings && (
+            <div className="mt-5 flex flex-col gap-2.5">
+              {RATINGS.map(r => (
+                <div key={r.num} className="flex items-baseline gap-3 text-sm">
+                  <div
+                    className="w-2.5 h-2.5 rounded-full shrink-0"
+                    style={{ background: r.color, transform: 'translateY(2px)' }}
+                  />
+                  <div className="serif" style={{ fontWeight: 500, minWidth: 50 }}>{r.label}</div>
+                  <div style={{ color: 'var(--ink-muted)' }}>{r.desc}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="px-6 pt-4">
+        <button onClick={next} className="btn-primary w-full py-3.5 rounded-xl">
+          {isLast ? 'Begin' : 'Next'}
+        </button>
+      </div>
+      <div className="px-6 pb-8 pt-4 flex items-center justify-center gap-1.5">
+        {screens.map((_, i) => (
+          <div
+            key={i}
+            className={`dot ${i === step ? 'dot-current' : ''} ${i < step ? 'dot-done' : ''}`}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* =====================================================================
    APP
    ===================================================================== */
 export default function App() {
@@ -1320,8 +1429,19 @@ export default function App() {
         setGoalSeconds(settings.goalSeconds);
       }
     }
+
+    if (!storageGet('onboardingDismissed') && hist.length === 0) {
+      setView('onboarding');
+    }
+
     setLoaded(true);
   }, []);
+
+  const dismissOnboarding = () => {
+    storageSet('onboardingDismissed', true);
+    setView('home');
+  };
+  const showOnboarding = () => setView('onboarding');
 
   useEffect(() => {
     if (!loaded) return;
@@ -1523,6 +1643,8 @@ export default function App() {
           <div className="flex-1 flex items-center justify-center">
             <div className="serif italic text-xl" style={{ color: 'var(--ink-muted)' }}>Loading…</div>
           </div>
+        ) : view === 'onboarding' ? (
+          <Onboarding onClose={dismissOnboarding} />
         ) : view === 'home' ? (
           <Home
             nextNumber={nextNumber}
@@ -1531,6 +1653,7 @@ export default function App() {
             goalProgress={goalProgress}
             onStart={handleStartSetup}
             onHistory={() => setView('history')}
+            onShowOnboarding={showOnboarding}
             soundEnabled={soundEnabled}
             toggleSound={() => setSoundEnabled(s => !s)}
             resumable={activeSession}
