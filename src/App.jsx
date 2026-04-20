@@ -89,6 +89,24 @@ function formatDate(iso) {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+function dateToISO(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+function todayISO() { return dateToISO(new Date()); }
+function addDaysISO(iso, n) {
+  const d = new Date(iso + 'T00:00:00');
+  d.setDate(d.getDate() + n);
+  return dateToISO(d);
+}
+function dayDiff(aISO, bISO) {
+  const a = new Date(aISO + 'T00:00:00');
+  const b = new Date(bISO + 'T00:00:00');
+  return Math.round((b - a) / 86400000);
+}
+
 function generateWarmUps() {
   const count = 5 + Math.floor(Math.random() * 3);
   const shortVals = [5, 10, 15, 20];
@@ -1070,22 +1088,77 @@ function GoalCard({ goalSeconds, onChange, askConfirm }) {
 /* =====================================================================
    HISTORY
    ===================================================================== */
+const CHART_RANGES = [
+  { id: 'all',   label: 'All time' },
+  { id: 'month', label: 'Past month' },
+  { id: 'week',  label: 'Past 7 days' },
+];
+
 function HistoryView({ history, goalSeconds, onChangeGoal, askConfirm,
                        onBack, onEdit, onExport, onImport }) {
   const fileInputRef = useRef(null);
+  const [chartRange, setChartRange] = useState('all');
+
   const sorted = [...history].sort((a, b) => b.number - a.number);
-  const chartData = [...history].sort((a, b) => a.number - b.number).map(s => ({
-    session: s.number,
-    minutes: Math.round((s.rehearsalSeconds / 60) * 10) / 10,
-    rating: s.rating ?? null,
-  }));
+
+  // Build a daily series so the line can break across empty days.
+  // For days with multiple sessions, take the one with the highest session
+  // number (the day's training endpoint).
+  const today = todayISO();
+  const datedSessions = history.filter(s => s.date);
+  const earliest = datedSessions.length
+    ? datedSessions.reduce((a, s) => (s.date < a ? s.date : a), datedSessions[0].date)
+    : today;
+
+  let startISO;
+  if (chartRange === 'week') startISO = addDaysISO(today, -6);
+  else if (chartRange === 'month') startISO = addDaysISO(today, -29);
+  else startISO = earliest <= today ? earliest : today;
+
+  // Make sure the latest session is always within view, even if its date is
+  // somehow after "today" (e.g. timezone edge cases).
+  const latestSessionDate = datedSessions.reduce((m, s) => (s.date > m ? s.date : m), today);
+  const endISO = latestSessionDate > today ? latestSessionDate : today;
+
+  const byDate = new Map();
+  for (const s of datedSessions) {
+    const existing = byDate.get(s.date);
+    if (!existing || s.number > existing.number) byDate.set(s.date, s);
+  }
+
+  const days = Math.max(0, dayDiff(startISO, endISO));
+  const chartData = [];
+  for (let i = 0; i <= days; i++) {
+    const iso = addDaysISO(startISO, i);
+    const sess = byDate.get(iso);
+    chartData.push({
+      date: iso,
+      minutes: sess ? Math.round((sess.rehearsalSeconds / 60) * 10) / 10 : null,
+      rating: sess ? (sess.rating ?? null) : null,
+    });
+  }
+
+  const validMinutes = chartData.filter(d => d.minutes != null).map(d => d.minutes);
   const goalMinutes = goalSeconds / 60;
-  const dataMax = chartData.length ? Math.max(...chartData.map(d => d.minutes)) : 0;
+  const dataMax = validMinutes.length ? Math.max(...validMinutes) : 0;
   const yMax = Math.max(goalMinutes, dataMax) * 1.1 + 1;
 
-  // Custom dot that colors by rating
+  const formatXTick = (iso) => {
+    const d = new Date(iso + 'T00:00:00');
+    if (chartRange === 'week') return d.toLocaleDateString(undefined, { weekday: 'short' });
+    if (chartRange === 'month') return d.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' });
+    return d.toLocaleDateString(undefined, { month: 'short' });
+  };
+  const formatTooltipDate = (iso) => {
+    const d = new Date(iso + 'T00:00:00');
+    return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  // Custom dot that colors by rating; skip null days entirely so empty
+  // days don't render stray markers.
   const renderDot = (props) => {
     const { cx, cy, payload, index } = props;
+    if (payload.minutes == null) return null;
     const color = ratingColor(payload.rating) || '#B8563A';
     return <circle key={index} cx={cx} cy={cy} r={3.5} fill={color} stroke="none" />;
   };
@@ -1100,18 +1173,46 @@ function HistoryView({ history, goalSeconds, onChangeGoal, askConfirm,
 
         <GoalCard goalSeconds={goalSeconds} onChange={onChangeGoal} askConfirm={askConfirm} />
 
-        {chartData.length > 0 && (
+        {history.length > 0 && (
           <div className="card p-4 mb-5">
             <div className="flex items-center justify-between mb-3">
               <div className="text-xs tracking-widest uppercase" style={{ color: 'var(--ink-muted)' }}>
                 Rehearsal progression
               </div>
             </div>
+            <div className="flex items-center gap-1 mb-3 p-1 rounded-full" style={{ background: 'var(--bg-warm)' }}>
+              {CHART_RANGES.map(t => {
+                const active = chartRange === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => setChartRange(t.id)}
+                    className="flex-1 text-xs px-2 py-1.5 rounded-full transition-all"
+                    style={{
+                      background: active ? 'var(--surface)' : 'transparent',
+                      color: active ? 'var(--ink)' : 'var(--ink-muted)',
+                      fontWeight: active ? 500 : 400,
+                      border: active ? '1px solid var(--line)' : '1px solid transparent',
+                    }}
+                  >
+                    {t.label}
+                  </button>
+                );
+              })}
+            </div>
             <div style={{ width: '100%', height: 200 }}>
               <ResponsiveContainer>
                 <LineChart data={chartData} margin={{ top: 8, right: 12, left: -24, bottom: 0 }}>
                   <CartesianGrid stroke="#D9CEB8" strokeDasharray="2 4" vertical={false} />
-                  <XAxis dataKey="session" tick={{ fontSize: 10, fill: '#8B7B6C' }} axisLine={{ stroke: '#D9CEB8' }} tickLine={false} />
+                  <XAxis
+                    dataKey="date"
+                    tick={{ fontSize: 10, fill: '#8B7B6C' }}
+                    axisLine={{ stroke: '#D9CEB8' }}
+                    tickLine={false}
+                    tickFormatter={formatXTick}
+                    minTickGap={chartRange === 'week' ? 0 : 24}
+                    interval="preserveStartEnd"
+                  />
                   <YAxis tick={{ fontSize: 10, fill: '#8B7B6C' }} axisLine={false} tickLine={false} unit="m" domain={[0, yMax]} />
                   <Tooltip
                     contentStyle={{ background: '#FBF7EF', border: '1px solid #D9CEB8', borderRadius: 8, fontSize: 12, fontFamily: 'IBM Plex Sans' }}
@@ -1120,7 +1221,7 @@ function HistoryView({ history, goalSeconds, onChangeGoal, askConfirm,
                       const rLabel = r ? ` (${ratingMeta(r)?.label})` : '';
                       return [`${v} min${rLabel}`, 'Rehearsal'];
                     }}
-                    labelFormatter={(l) => `Session ${l}`}
+                    labelFormatter={formatTooltipDate}
                   />
                   <ReferenceLine
                     y={goalMinutes}
@@ -1142,10 +1243,17 @@ function HistoryView({ history, goalSeconds, onChangeGoal, askConfirm,
                     strokeWidth={1.5}
                     dot={renderDot}
                     activeDot={{ r: 6 }}
+                    connectNulls={false}
+                    isAnimationActive={false}
                   />
                 </LineChart>
               </ResponsiveContainer>
             </div>
+            {validMinutes.length === 0 && (
+              <div className="text-center text-xs italic mt-2" style={{ color: 'var(--ink-muted)' }}>
+                No sessions in this period.
+              </div>
+            )}
             {/* Color legend */}
             <div className="flex flex-wrap gap-3 mt-3 text-xs" style={{ color: 'var(--ink-muted)' }}>
               {RATINGS.map(r => (
