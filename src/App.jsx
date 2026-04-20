@@ -1572,6 +1572,14 @@ export default function App() {
             onExport={handleExport}
             onImport={handleImport}
           />
+        ) : view === 'edit' && editTarget ? (
+          <EditSession
+            session={editTarget.session}
+            onBack={() => { setEditTarget(null); setView('history'); }}
+            onSave={handleSaveEdit}
+            onDelete={handleDeleteEdit}
+            askConfirm={askConfirm}
+          />
         ) : null}
       </div>
       <ConfirmDialog dialog={confirmDialog} />
