@@ -1140,8 +1140,7 @@ function Summary({ session, onSave, onDiscard }) {
 /* =====================================================================
    EDIT SESSION
    ===================================================================== */
-function EditSession({ session, onBack, onSave, onDelete, askConfirm }) {
-  const [num, setNum] = useState(String(session.number));
+function EditSession({ session, isNew = false, onBack, onSave, onDelete, askConfirm }) {
   const [date, setDate] = useState(session.date || '');
   const [goalStr, setGoalStr] = useState(formatTime(session.rehearsalSeconds));
   const [warmUps, setWarmUps] = useState([...session.warmUps]);
@@ -1150,8 +1149,7 @@ function EditSession({ session, onBack, onSave, onDelete, askConfirm }) {
   const [editingIdx, setEditingIdx] = useState(null);
 
   const goalSeconds = parseMMSS(goalStr);
-  const numValue = parseInt(num, 10);
-  const valid = !isNaN(numValue) && numValue > 0 && goalSeconds !== null && goalSeconds > 0;
+  const valid = goalSeconds !== null && goalSeconds > 0;
 
   const changeWarmUp = (idx, newValue) => {
     const v = Math.max(0, Math.min(600, parseInt(newValue, 10) || 0));
@@ -1163,7 +1161,7 @@ function EditSession({ session, onBack, onSave, onDelete, askConfirm }) {
   const handleSave = () => {
     if (!valid) return;
     onSave({
-      number: numValue, date: date || null,
+      number: session.number, date: date || null,
       rehearsalSeconds: goalSeconds, warmUps, notes, rating,
     });
   };
@@ -1180,18 +1178,19 @@ function EditSession({ session, onBack, onSave, onDelete, askConfirm }) {
   return (
     <div className="fade-up flex flex-col flex-1 min-h-0">
       <TopBar
-        title={`EDIT SESSION ${session.number}`}
+        title={`${isNew ? 'ADD' : 'EDIT'} SESSION ${session.number}`}
         left={<button onClick={onBack} className="btn-ghost p-2"><ChevronLeft size={22} /></button>}
       />
       <div className="flex-1 min-h-0 px-6 pb-24 overflow-y-auto">
         <div className="mb-6">
           <div className="text-xs tracking-widest uppercase mb-2" style={{ color: 'var(--ink-muted)' }}>Session number</div>
-          <input
-            type="number" inputMode="numeric" value={num}
-            onChange={e => setNum(e.target.value)}
-            className="input-text serif tabular text-3xl py-2 px-4 rounded-xl w-full"
-            style={{ fontWeight: 500 }}
-          />
+          <div
+            className="serif tabular text-3xl py-2 px-4 rounded-xl"
+            style={{ fontWeight: 500, color: 'var(--ink-muted)', background: 'var(--bg-warm)', border: '1px solid var(--line)' }}
+            aria-label={`Session number ${session.number}`}
+          >
+            {session.number}
+          </div>
         </div>
 
         <div className="mb-6">
@@ -1261,17 +1260,19 @@ function EditSession({ session, onBack, onSave, onDelete, askConfirm }) {
           />
         </div>
 
-        <button
-          onClick={handleDelete}
-          className="btn-destructive w-full py-3 rounded-full text-sm flex items-center justify-center gap-2 mt-8"
-        >
-          <Trash2 size={16} /> Delete this session
-        </button>
+        {!isNew && (
+          <button
+            onClick={handleDelete}
+            className="btn-destructive w-full py-3 rounded-full text-sm flex items-center justify-center gap-2 mt-8"
+          >
+            <Trash2 size={16} /> Delete this session
+          </button>
+        )}
       </div>
 
       <div className="px-6 pb-6 pt-4" style={{ background: 'linear-gradient(to top, var(--bg) 70%, transparent)' }}>
         <button disabled={!valid} onClick={handleSave} className="btn-primary w-full py-4 rounded-full text-base">
-          Save changes
+          {isNew ? 'Add session' : 'Save changes'}
         </button>
       </div>
     </div>
@@ -1352,9 +1353,23 @@ function GoalCard({ goalSeconds, onChange, askConfirm }) {
         )}
       </div>
       {editing ? (
-        <div className="flex items-center gap-1">
-          <button onClick={cancel} className="btn-ghost p-2"><X size={18} /></button>
-          <button onClick={save} className="btn-ghost p-2" style={{ color: 'var(--clay)' }}><Check size={18} /></button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={cancel}
+            className="btn-ghost rounded-full flex items-center justify-center"
+            style={{ width: 40, height: 40, border: '1px solid var(--line)' }}
+            aria-label="Cancel"
+          >
+            <X size={22} />
+          </button>
+          <button
+            onClick={save}
+            className="rounded-full flex items-center justify-center"
+            style={{ width: 40, height: 40, background: 'var(--clay)', color: 'var(--surface)' }}
+            aria-label="Save goal"
+          >
+            <Check size={22} />
+          </button>
         </div>
       ) : (
         <button onClick={startEdit} className="btn-ghost p-2"><Pencil size={16} /></button>
@@ -1660,7 +1675,7 @@ function ProgressionChart({
 }
 
 function HistoryView({ history, goalSeconds, onChangeGoal, askConfirm,
-                       onBack, onEdit, onExport, onImport }) {
+                       onBack, onEdit, onAdd, onExport, onImport }) {
   const fileInputRef = useRef(null);
   const sorted = [...history].sort((a, b) => b.number - a.number);
 
@@ -1678,8 +1693,18 @@ function HistoryView({ history, goalSeconds, onChangeGoal, askConfirm,
           <ProgressionChart history={history} goalSeconds={goalSeconds} />
         )}
 
-        <div className="text-xs tracking-widest uppercase mb-2 px-1" style={{ color: 'var(--ink-muted)' }}>
-          {history.length} sessions
+        <div className="flex items-center justify-between mb-2 px-1">
+          <div className="text-xs tracking-widest uppercase" style={{ color: 'var(--ink-muted)' }}>
+            {history.length} sessions
+          </div>
+          <button
+            onClick={onAdd}
+            className="btn-ghost text-xs flex items-center gap-1 py-1 px-2 rounded-full"
+            style={{ color: 'var(--clay)' }}
+            aria-label="Add session"
+          >
+            <Plus size={14} /> Add session
+          </button>
         </div>
         <div className="space-y-2">
           {sorted.map((s, idx) => {
@@ -2409,13 +2434,25 @@ export default function App() {
   };
 
   const handleEditFromHistory = (session, index) => {
-    setEditTarget({ session, originalNumber: session.number, index });
+    setEditTarget({ session, originalNumber: session.number, index, isNew: false });
+    setView('edit');
+  };
+
+  const handleAddSessionFromHistory = () => {
+    const blank = {
+      number: nextNumber,
+      date: new Date().toISOString().slice(0, 10), // YYYY-MM-DD
+      rehearsalSeconds: 60,
+      warmUps: [],
+      notes: '',
+      rating: null,
+    };
+    setEditTarget({ session: blank, isNew: true });
     setView('edit');
   };
 
   const handleSaveEdit = (updated) => {
-    const newHistory = [...history];
-    newHistory[editTarget.index] = {
+    const entry = {
       number: updated.number,
       date: updated.date,
       rehearsalSeconds: updated.rehearsalSeconds,
@@ -2423,7 +2460,14 @@ export default function App() {
       notes: updated.notes,
       rating: updated.rating ?? null,
     };
-    newHistory.sort((a, b) => a.number - b.number);
+    let newHistory;
+    if (editTarget.isNew) {
+      newHistory = [...history, entry].sort((a, b) => a.number - b.number);
+    } else {
+      newHistory = [...history];
+      newHistory[editTarget.index] = entry;
+      newHistory.sort((a, b) => a.number - b.number);
+    }
     setHistory(newHistory);
     storageSet('history', newHistory);
     setEditTarget(null);
@@ -2514,12 +2558,14 @@ export default function App() {
             askConfirm={askConfirm}
             onBack={() => setView('home')}
             onEdit={handleEditFromHistory}
+            onAdd={handleAddSessionFromHistory}
             onExport={handleExport}
             onImport={handleImport}
           />
         ) : view === 'edit' && editTarget ? (
           <EditSession
             session={editTarget.session}
+            isNew={!!editTarget.isNew}
             onBack={() => { setEditTarget(null); setView('history'); }}
             onSave={handleSaveEdit}
             onDelete={handleDeleteEdit}
