@@ -575,7 +575,7 @@ const HOME_KIND_META = {
   'fresh':     { Icon: Play,         label: 'first session',    color: 'var(--ink-muted)' },
 };
 
-// --- DEV-ONLY: remove this whole component before merging to main. ---
+// --- Notification test block (shipped; remove when no longer needed). ---
 function DevNotifTest({ notificationsEnabled, volume, notifPermission }) {
   const [countdown, setCountdown] = useState(null);
 
@@ -741,14 +741,13 @@ function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSecon
           </div>
         )}
 
-        {/* DEV-ONLY: remove this block before merging to main. */}
-        {import.meta.env.DEV && (
-          <DevNotifTest
-            notificationsEnabled={notificationsEnabled}
-            volume={volume}
-            notifPermission={notifPermission}
-          />
-        )}
+        {/* DEV test block (also shipped to production so the live PWA can be
+            used to verify notifications on-device). Remove when no longer needed. */}
+        <DevNotifTest
+          notificationsEnabled={notificationsEnabled}
+          volume={volume}
+          notifPermission={notifPermission}
+        />
         {/* end DEV block */}
 
         {/* Buttons pinned to bottom via mt-auto */}
