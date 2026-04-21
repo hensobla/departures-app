@@ -223,28 +223,54 @@ function computeNextRehearsal(history, opts = {}) {
   return { seconds: lastSecs + increment, reason, kind: 'step-up' };
 }
 
-/* ---- Goal heuristics ---- */
-function projectToGoal(currentSeconds, goalSeconds) {
+/* ---- Goal heuristics ----
+   Simulate forward using the real computeNextRehearsal() so the chart and
+   estimate show what the algorithm actually recommends (including step-backs
+   after Bad ratings, repeats after Fair, and periodic shake-ups) — not a
+   generalised linear step-up. We assume "Great" (rating 1) for synthetic
+   future sessions, which yields an optimistic-but-realistic trajectory.
+*/
+function simulateProjection(history, goalSeconds, maxSteps = Infinity) {
+  if (!history || history.length === 0) return [];
+  const sorted = [...history].sort((a, b) => a.number - b.number);
+  const current = sorted[sorted.length - 1].rehearsalSeconds;
+  if (current >= goalSeconds) return [];
+
   const out = [];
-  let s = currentSeconds;
-  const MAX = 500;
-  while (out.length < MAX && s < goalSeconds) {
-    let increment;
-    if (s < 300) increment = 30;
-    else if (s < 600) increment = 60;
-    else if (s < 1200) increment = 120;
-    else if (s < 1800) increment = 180;
-    else increment = 300;
-    s += increment;
-    out.push(s);
+  let simHistory = sorted;
+  let lastNum = sorted[sorted.length - 1].number;
+  const HARD_CAP = 500;
+
+  while (out.length < maxSteps && out.length < HARD_CAP) {
+    const last = simHistory[simHistory.length - 1];
+    if (last.rehearsalSeconds >= goalSeconds) break;
+    const next = computeNextRehearsal(simHistory);
+    lastNum += 1;
+    out.push({ number: lastNum, seconds: next.seconds, kind: next.kind });
+    simHistory = [
+      ...simHistory,
+      {
+        number: lastNum,
+        rehearsalSeconds: next.seconds,
+        rating: 1,
+        warmUps: [],
+        date: new Date().toISOString(),
+      },
+    ];
   }
-  return out.length >= MAX ? null : out;
+  return out;
 }
 
-function estimateSessionsToGoal(currentSeconds, goalSeconds) {
-  if (currentSeconds >= goalSeconds) return 0;
-  const path = projectToGoal(currentSeconds, goalSeconds);
-  return path === null ? null : path.length;
+function estimateSessionsToGoal(history, goalSeconds) {
+  if (!history || history.length === 0) return null;
+  const sorted = [...history].sort((a, b) => a.number - b.number);
+  const current = sorted[sorted.length - 1].rehearsalSeconds;
+  if (current >= goalSeconds) return 0;
+  const proj = simulateProjection(history, goalSeconds);
+  if (!proj.length) return null;
+  const last = proj[proj.length - 1];
+  if (last.seconds < goalSeconds) return null; // capped out, unreachable
+  return proj.length;
 }
 
 function computeGoalProgress(history, goalSeconds) {
@@ -264,7 +290,7 @@ function computeGoalProgress(history, goalSeconds) {
     return { current, percent, estimate: null, trend: 'no-data' };
   }
 
-  const estimate = estimateSessionsToGoal(current, goalSeconds);
+  const estimate = estimateSessionsToGoal(history, goalSeconds);
   return { current, percent, estimate, trend: 'increasing' };
 }
 
@@ -450,36 +476,8 @@ function TopBar({ left, right, title }) {
 function Home({ nextRehearsalSeconds, history, goalSeconds, goalProgress,
                 onStart, onHistory, onShowOnboarding, soundEnabled, toggleSound,
                 resumable, onResume, onDiscardActive }) {
-  const sortedHistory = history ? [...history].sort((a, b) => a.number - b.number) : [];
-  const recent = sortedHistory.slice(-3);
-  const currentSecs = recent.length ? recent[recent.length - 1].rehearsalSeconds : 0;
-  const projected = recent.length && currentSecs < goalSeconds
-    ? (projectToGoal(currentSecs, goalSeconds) || []).slice(0, 5)
-    : [];
-
-  let chartData = null;
-  if (recent.length) {
-    const lastNum = recent[recent.length - 1].number;
-    chartData = [
-      ...recent.map(s => ({ x: s.number, histMin: s.rehearsalSeconds / 60, projMin: null })),
-      ...projected.map((secs, i) => ({ x: lastNum + i + 1, histMin: null, projMin: secs / 60 })),
-    ];
-    if (projected.length > 0) {
-      chartData[recent.length - 1].projMin = chartData[recent.length - 1].histMin;
-    }
-  }
-  const goalMin = goalSeconds / 60;
-  const dataMax = chartData
-    ? Math.max(...recent.map(s => s.rehearsalSeconds / 60), ...projected.map(s => s / 60))
-    : 0;
-  const yMax = Math.max(goalMin, dataMax) * 1.15 + 0.5;
-  const bridgeIndex = recent.length - 1;
-
-  const projDot = (props) => {
-    const { cx, cy, index, key, payload } = props;
-    if (payload?.projMin == null || index === bridgeIndex) return <g key={key} />;
-    return <circle key={key} cx={cx} cy={cy} r={3} fill="#FBF7EF" stroke="#B8563A" strokeOpacity={0.6} strokeWidth={1.5} />;
-  };
+  const hasHistory = history && history.length > 0;
+  const projection = hasHistory ? simulateProjection(history, goalSeconds, 5) : [];
 
   return (
     <div className="fade-up flex flex-col flex-1 min-h-0">
@@ -503,50 +501,16 @@ function Home({ nextRehearsalSeconds, history, goalSeconds, goalProgress,
             {formatTimeLong(nextRehearsalSeconds)}
           </div>
 
-          {chartData && (
-            <div className="mb-8">
-              <div className="w-full" style={{ height: 96 }}>
-                <ResponsiveContainer>
-                  <LineChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                    <XAxis dataKey="x" hide type="number" domain={['dataMin', 'dataMax']} />
-                    <YAxis hide domain={[0, yMax]} />
-                    <ReferenceLine y={goalMin} stroke="#7A8F6F" strokeDasharray="3 3" strokeWidth={1} />
-                    {projected.length > 0 && (
-                      <ReferenceLine x={recent[recent.length - 1].number} stroke="#D9CEB8" strokeWidth={1} />
-                    )}
-                    <Line
-                      type="monotone"
-                      dataKey="projMin"
-                      stroke="#B8563A"
-                      strokeOpacity={0.5}
-                      strokeWidth={1.5}
-                      strokeDasharray="4 4"
-                      dot={projDot}
-                      isAnimationActive={false}
-                      connectNulls={false}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="histMin"
-                      stroke="#B8563A"
-                      strokeWidth={1.5}
-                      dot={{ r: 3, fill: '#B8563A', stroke: 'none' }}
-                      isAnimationActive={false}
-                      connectNulls={false}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="mt-2 flex items-center gap-4 text-xs" style={{ color: 'var(--ink-muted)' }}>
-                <div className="flex items-center gap-1.5">
-                  <span style={{ width: 12, height: 2, background: '#B8563A', borderRadius: 1 }} />
-                  Recent
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span style={{ width: 12, height: 0, borderTop: '1.5px dashed #B8563A', opacity: 0.6 }} />
-                  Projected
-                </div>
-              </div>
+          {hasHistory && (
+            <div className="mb-6">
+              <ProgressionChart
+                history={history}
+                goalSeconds={goalSeconds}
+                projection={projection}
+                compact
+                height={120}
+                historyTake={3}
+              />
             </div>
           )}
 
@@ -1161,36 +1125,294 @@ const CHART_RANGES = [
   { id: '7',   label: 'Past 7 sessions',  take: 7 },
 ];
 
-function HistoryView({ history, goalSeconds, onChangeGoal, askConfirm,
-                       onBack, onEdit, onExport, onImport }) {
-  const fileInputRef = useRef(null);
+const KIND_LABEL = {
+  'step-up':   'step up',
+  'step-back': 'step back',
+  'shake-up':  'shake-up',
+  'repeat':    'repeat',
+  'fresh':     'start',
+};
+
+/**
+ * Shared chart showing historical rehearsal durations and (optionally) a
+ * dashed projection of upcoming sessions from simulateProjection().
+ *
+ * Props:
+ *   history:       Array of session records.
+ *   goalSeconds:   Number — goal reference line.
+ *   projection:    Array of { number, seconds, kind } projected points (or []).
+ *   compact:       If true, hides range selector + legend and uses smaller
+ *                  padding. Home uses this.
+ *   height:        Chart height in px.
+ *   historyTake:   When compact, how many trailing history points to show.
+ *   showTitle:     Whether to render the "Rehearsal progression" label.
+ */
+function ProgressionChart({
+  history,
+  goalSeconds,
+  projection = [],
+  compact = false,
+  height = 200,
+  historyTake = 3,
+  showTitle = true,
+}) {
   const [chartRange, setChartRange] = useState('all');
 
-  const sorted = [...history].sort((a, b) => b.number - a.number);
-
-  // Chart axis is session number. Slice the tail of the series for the
-  // bounded ranges so the most recent sessions are always shown.
   const ascending = [...history].sort((a, b) => a.number - b.number);
-  const take = CHART_RANGES.find(r => r.id === chartRange)?.take ?? Infinity;
-  const sliced = take === Infinity ? ascending : ascending.slice(-take);
-  const chartData = sliced.map(s => ({
+  let sliced;
+  if (compact) {
+    sliced = ascending.slice(-historyTake);
+  } else {
+    const take = CHART_RANGES.find(r => r.id === chartRange)?.take ?? Infinity;
+    sliced = take === Infinity ? ascending : ascending.slice(-take);
+  }
+
+  const historyRows = sliced.map(s => ({
     session: s.number,
     minutes: Math.round((s.rehearsalSeconds / 60) * 10) / 10,
     rating: s.rating ?? null,
+    projMinutes: null,
+    kind: null,
   }));
 
+  const projectionRows = projection.map(p => ({
+    session: p.number,
+    minutes: null,
+    rating: null,
+    projMinutes: Math.round((p.seconds / 60) * 10) / 10,
+    kind: p.kind,
+  }));
+
+  // Bridge: duplicate last history point's value into projMinutes so the
+  // dashed line visually connects from the real last session to the first
+  // projected one. We flag it so the tooltip hides the duplicate entry.
+  const chartData = [...historyRows, ...projectionRows];
+  if (historyRows.length && projectionRows.length) {
+    const bridgeIdx = historyRows.length - 1;
+    chartData[bridgeIdx] = {
+      ...chartData[bridgeIdx],
+      projMinutes: chartData[bridgeIdx].minutes,
+      _bridge: true,
+    };
+  }
+
   const goalMinutes = goalSeconds / 60;
-  const dataMax = chartData.length ? Math.max(...chartData.map(d => d.minutes)) : 0;
+  const allMinutes = [
+    ...historyRows.map(d => d.minutes),
+    ...projectionRows.map(d => d.projMinutes),
+  ];
+  const dataMax = allMinutes.length ? Math.max(...allMinutes) : 0;
   const yMax = Math.max(goalMinutes, dataMax) * 1.1 + 1;
 
-  const formatXTick = (n) => `#${n}`;
-  const formatTooltipLabel = (n) => `Session #${n}`;
-
-  const renderDot = (props) => {
+  const renderHistoryDot = (props) => {
     const { cx, cy, payload, index } = props;
+    if (payload?.minutes == null) return <g key={index} />;
     const color = ratingColor(payload.rating) || '#B8563A';
-    return <circle key={index} cx={cx} cy={cy} r={3.5} fill={color} stroke="none" />;
+    return <circle key={index} cx={cx} cy={cy} r={compact ? 3 : 3.5} fill={color} stroke="none" />;
   };
+
+  const renderProjDot = (props) => {
+    const { cx, cy, payload, index } = props;
+    if (payload?.projMinutes == null) return <g key={index} />;
+    // Skip the bridge so we don't paint a hollow circle on top of the
+    // history's rating-colored dot.
+    if (payload._bridge) return <g key={index} />;
+    return (
+      <circle
+        key={index}
+        cx={cx}
+        cy={cy}
+        r={compact ? 3 : 3.5}
+        fill="#FBF7EF"
+        stroke="#B8563A"
+        strokeOpacity={0.6}
+        strokeWidth={1.5}
+      />
+    );
+  };
+
+  const tooltipContent = ({ active, payload, label }) => {
+    if (!active || !payload || !payload.length) return null;
+    const entries = payload.filter(p => p.value != null);
+    if (!entries.length) return null;
+
+    // Bridge: prefer the history entry over the duplicate projection entry.
+    const bridge = entries[0]?.payload?._bridge;
+    const filtered = bridge ? entries.filter(e => e.dataKey === 'minutes') : entries;
+    const e = filtered[0] ?? entries[0];
+    const p = e.payload;
+    const isProj = e.dataKey === 'projMinutes';
+
+    let detail;
+    if (isProj) {
+      const kindLabel = KIND_LABEL[p.kind];
+      detail = kindLabel
+        ? `${e.value} min · projected (${kindLabel})`
+        : `${e.value} min · projected`;
+    } else {
+      const r = p.rating;
+      const rLabel = r ? ` · ${ratingMeta(r)?.label}` : '';
+      detail = `${e.value} min${rLabel}`;
+    }
+
+    return (
+      <div
+        style={{
+          background: '#FBF7EF',
+          border: '1px solid #D9CEB8',
+          borderRadius: 8,
+          padding: '6px 10px',
+          fontSize: 12,
+          fontFamily: 'IBM Plex Sans',
+        }}
+      >
+        <div style={{ color: '#8B7B6C', fontSize: 11, marginBottom: 2 }}>
+          Session #{label}
+        </div>
+        <div style={{ color: isProj ? '#8B7B6C' : '#1F1915' }}>{detail}</div>
+      </div>
+    );
+  };
+
+  const lastHistorySession = historyRows.length
+    ? historyRows[historyRows.length - 1].session
+    : null;
+
+  return (
+    <div className={compact ? '' : 'card p-4 mb-5'}>
+      {!compact && showTitle && (
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-xs tracking-widest uppercase" style={{ color: 'var(--ink-muted)' }}>
+            Rehearsal progression
+          </div>
+        </div>
+      )}
+      {!compact && (
+        <div className="flex items-center gap-1 mb-3 p-1 rounded-full" style={{ background: 'var(--bg-warm)' }}>
+          {CHART_RANGES.map(t => {
+            const active = chartRange === t.id;
+            return (
+              <button
+                key={t.id}
+                onClick={() => setChartRange(t.id)}
+                className="flex-1 text-xs px-2 py-1.5 rounded-full transition-all"
+                style={{
+                  background: active ? 'var(--surface)' : 'transparent',
+                  color: active ? 'var(--ink)' : 'var(--ink-muted)',
+                  fontWeight: active ? 500 : 400,
+                  border: active ? '1px solid var(--line)' : '1px solid transparent',
+                }}
+              >
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      <div style={{ width: '100%', height }}>
+        <ResponsiveContainer>
+          <LineChart
+            data={chartData}
+            margin={compact ? { top: 8, right: 6, left: -30, bottom: 0 } : { top: 8, right: 12, left: -24, bottom: 0 }}
+          >
+            <CartesianGrid stroke="#D9CEB8" strokeDasharray="2 4" vertical={false} />
+            <XAxis
+              dataKey="session"
+              tick={{ fontSize: 10, fill: '#8B7B6C' }}
+              axisLine={{ stroke: '#D9CEB8' }}
+              tickLine={false}
+              tickFormatter={(n) => `#${n}`}
+              minTickGap={compact ? 10 : (chartRange === '7' ? 0 : 16)}
+              interval="preserveStartEnd"
+            />
+            <YAxis
+              tick={{ fontSize: 10, fill: '#8B7B6C' }}
+              axisLine={false}
+              tickLine={false}
+              unit="m"
+              domain={[0, yMax]}
+              width={compact ? 32 : undefined}
+            />
+            <Tooltip content={tooltipContent} />
+            <ReferenceLine
+              y={goalMinutes}
+              stroke="#7A8F6F"
+              strokeDasharray="4 4"
+              strokeWidth={1.5}
+              label={
+                compact
+                  ? undefined
+                  : {
+                      value: `Goal ${formatTimeLong(goalSeconds)}`,
+                      position: 'insideTopRight',
+                      fill: '#7A8F6F',
+                      fontSize: 10,
+                      fontFamily: 'IBM Plex Sans',
+                    }
+              }
+            />
+            {projectionRows.length > 0 && lastHistorySession != null && (
+              <ReferenceLine
+                x={lastHistorySession}
+                stroke="#D9CEB8"
+                strokeWidth={1}
+                strokeDasharray="2 3"
+              />
+            )}
+            {/* Projection first so history dots render on top at the bridge. */}
+            <Line
+              type="monotone"
+              dataKey="projMinutes"
+              stroke="#B8563A"
+              strokeOpacity={0.5}
+              strokeWidth={1.5}
+              strokeDasharray="4 4"
+              dot={renderProjDot}
+              activeDot={{ r: compact ? 5 : 6, fill: '#FBF7EF', stroke: '#B8563A', strokeWidth: 1.5 }}
+              isAnimationActive={false}
+              connectNulls={false}
+            />
+            <Line
+              type="monotone"
+              dataKey="minutes"
+              stroke="#B8563A"
+              strokeWidth={1.5}
+              dot={renderHistoryDot}
+              activeDot={{ r: compact ? 5 : 6 }}
+              isAnimationActive={false}
+              connectNulls={false}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+      {!compact && (
+        <div className="flex flex-wrap gap-3 mt-3 text-xs" style={{ color: 'var(--ink-muted)' }}>
+          {RATINGS.map(r => (
+            <div key={r.num} className="flex items-center gap-1.5">
+              <div style={{ width: 8, height: 8, borderRadius: 999, background: r.color }} />
+              <span>{r.num} {r.label}</span>
+            </div>
+          ))}
+          <div className="flex items-center gap-1.5">
+            <div style={{ width: 8, height: 8, borderRadius: 999, background: '#B8563A' }} />
+            <span>Unrated</span>
+          </div>
+          {projectionRows.length > 0 && (
+            <div className="flex items-center gap-1.5">
+              <span style={{ width: 12, height: 0, borderTop: '1.5px dashed #B8563A', opacity: 0.6 }} />
+              <span>Projected</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HistoryView({ history, goalSeconds, onChangeGoal, askConfirm,
+                       onBack, onEdit, onExport, onImport }) {
+  const fileInputRef = useRef(null);
+  const sorted = [...history].sort((a, b) => b.number - a.number);
 
   return (
     <div className="fade-up flex flex-col flex-1 min-h-0">
@@ -1203,94 +1425,7 @@ function HistoryView({ history, goalSeconds, onChangeGoal, askConfirm,
         <GoalCard goalSeconds={goalSeconds} onChange={onChangeGoal} askConfirm={askConfirm} />
 
         {history.length > 0 && (
-          <div className="card p-4 mb-5">
-            <div className="flex items-center justify-between mb-3">
-              <div className="text-xs tracking-widest uppercase" style={{ color: 'var(--ink-muted)' }}>
-                Rehearsal progression
-              </div>
-            </div>
-            <div className="flex items-center gap-1 mb-3 p-1 rounded-full" style={{ background: 'var(--bg-warm)' }}>
-              {CHART_RANGES.map(t => {
-                const active = chartRange === t.id;
-                return (
-                  <button
-                    key={t.id}
-                    onClick={() => setChartRange(t.id)}
-                    className="flex-1 text-xs px-2 py-1.5 rounded-full transition-all"
-                    style={{
-                      background: active ? 'var(--surface)' : 'transparent',
-                      color: active ? 'var(--ink)' : 'var(--ink-muted)',
-                      fontWeight: active ? 500 : 400,
-                      border: active ? '1px solid var(--line)' : '1px solid transparent',
-                    }}
-                  >
-                    {t.label}
-                  </button>
-                );
-              })}
-            </div>
-            <div style={{ width: '100%', height: 200 }}>
-              <ResponsiveContainer>
-                <LineChart data={chartData} margin={{ top: 8, right: 12, left: -24, bottom: 0 }}>
-                  <CartesianGrid stroke="#D9CEB8" strokeDasharray="2 4" vertical={false} />
-                  <XAxis
-                    dataKey="session"
-                    tick={{ fontSize: 10, fill: '#8B7B6C' }}
-                    axisLine={{ stroke: '#D9CEB8' }}
-                    tickLine={false}
-                    tickFormatter={formatXTick}
-                    minTickGap={chartRange === '7' ? 0 : 16}
-                    interval="preserveStartEnd"
-                  />
-                  <YAxis tick={{ fontSize: 10, fill: '#8B7B6C' }} axisLine={false} tickLine={false} unit="m" domain={[0, yMax]} />
-                  <Tooltip
-                    contentStyle={{ background: '#FBF7EF', border: '1px solid #D9CEB8', borderRadius: 8, fontSize: 12, fontFamily: 'IBM Plex Sans' }}
-                    formatter={(v, name, item) => {
-                      const r = item?.payload?.rating;
-                      const rLabel = r ? ` (${ratingMeta(r)?.label})` : '';
-                      return [`${v} min${rLabel}`, 'Rehearsal'];
-                    }}
-                    labelFormatter={formatTooltipLabel}
-                  />
-                  <ReferenceLine
-                    y={goalMinutes}
-                    stroke="#7A8F6F"
-                    strokeDasharray="4 4"
-                    strokeWidth={1.5}
-                    label={{
-                      value: `Goal ${formatTimeLong(goalSeconds)}`,
-                      position: 'insideTopRight',
-                      fill: '#7A8F6F',
-                      fontSize: 10,
-                      fontFamily: 'IBM Plex Sans',
-                    }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="minutes"
-                    stroke="#B8563A"
-                    strokeWidth={1.5}
-                    dot={renderDot}
-                    activeDot={{ r: 6 }}
-                    isAnimationActive={false}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-            {/* Color legend */}
-            <div className="flex flex-wrap gap-3 mt-3 text-xs" style={{ color: 'var(--ink-muted)' }}>
-              {RATINGS.map(r => (
-                <div key={r.num} className="flex items-center gap-1.5">
-                  <div style={{ width: 8, height: 8, borderRadius: 999, background: r.color }} />
-                  <span>{r.num} {r.label}</span>
-                </div>
-              ))}
-              <div className="flex items-center gap-1.5">
-                <div style={{ width: 8, height: 8, borderRadius: 999, background: '#B8563A' }} />
-                <span>Unrated</span>
-              </div>
-            </div>
-          </div>
+          <ProgressionChart history={history} goalSeconds={goalSeconds} />
         )}
 
         <div className="text-xs tracking-widest uppercase mb-2 px-1" style={{ color: 'var(--ink-muted)' }}>
