@@ -575,62 +575,8 @@ const HOME_KIND_META = {
   'fresh':     { Icon: Play,         label: 'first session',    color: 'var(--ink-muted)' },
 };
 
-// --- Notification test block (shipped; remove when no longer needed). ---
-function DevNotifTest({ notificationsEnabled, volume, notifPermission }) {
-  const [countdown, setCountdown] = useState(null);
-
-  const fire = () => {
-    setCountdown(3);
-    let remaining = 3;
-    const tick = setInterval(() => {
-      remaining -= 1;
-      if (remaining > 0) {
-        setCountdown(remaining);
-      } else {
-        clearInterval(tick);
-        setCountdown(null);
-        firePhaseEndAlert({
-          notificationsEnabled,
-          volume,
-          title: 'Test phase complete',
-          body: 'This is a dev-mode notification test.',
-        });
-      }
-    }, 1000);
-  };
-
-  return (
-    <div
-      className="card p-4 mb-4"
-      style={{ border: '1.5px dashed var(--amber)', background: 'transparent' }}
-    >
-      <div className="text-xs tracking-widest uppercase mb-2" style={{ color: 'var(--amber)' }}>
-        DEV · Notification test
-      </div>
-      <div className="text-xs mb-3" style={{ color: 'var(--ink-muted)' }}>
-        Permission: <span style={{ fontFamily: 'monospace' }}>{notifPermission ?? 'unsupported'}</span>
-        {' · '}
-        Toggle: <span style={{ fontFamily: 'monospace' }}>{notificationsEnabled ? 'on' : 'off'}</span>
-      </div>
-      <button
-        onClick={fire}
-        disabled={countdown !== null}
-        className="btn-secondary w-full text-sm py-2 rounded-full"
-      >
-        {countdown !== null ? `Firing in ${countdown}…` : 'Fire phase-end alert in 3s'}
-      </button>
-      <div className="text-xs mt-2 italic" style={{ color: 'var(--ink-muted)' }}>
-        Tap, then switch to another app within 3 s to test the system-notification path.
-        Stay on this screen to hear the chime.
-      </div>
-    </div>
-  );
-}
-// --- end DEV block ---
-
 function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSeconds, goalProgress,
                 onStart, onHistory, onShowOnboarding, onSettings, growthIntensity = 'typical',
-                notificationsEnabled, volume, notifPermission,
                 resumable, onResume, onDiscardActive }) {
   const hasHistory = history && history.length > 0;
   const projection = hasHistory ? simulateProjection(history, goalSeconds, 5, { growthIntensity }) : [];
@@ -740,15 +686,6 @@ function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSecon
             </div>
           </div>
         )}
-
-        {/* DEV test block (also shipped to production so the live PWA can be
-            used to verify notifications on-device). Remove when no longer needed. */}
-        <DevNotifTest
-          notificationsEnabled={notificationsEnabled}
-          volume={volume}
-          notifPermission={notifPermission}
-        />
-        {/* end DEV block */}
 
         {/* Buttons pinned to bottom via mt-auto */}
         <div className="mt-auto shrink-0 pb-6 pt-4">
@@ -2399,9 +2336,6 @@ export default function App() {
             onShowOnboarding={showOnboarding}
             onSettings={() => setView('settings')}
             growthIntensity={growthIntensity}
-            notificationsEnabled={notificationsEnabled}
-            volume={volume}
-            notifPermission={notifPermission}
             resumable={activeSession}
             onResume={handleResume}
             onDiscardActive={handleDiscardActive}
