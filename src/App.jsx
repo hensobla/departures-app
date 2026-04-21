@@ -408,31 +408,95 @@ function firePhaseEndAlert({ notificationsEnabled, volume, title, body }) {
   }
 }
 
-/* ---- alarm ---- */
+/* ---- alarm ----
+ * Plays a 3-note chime through an HTMLAudioElement (not Web Audio).
+ * Web Audio on iOS is always treated as "ambient" audio and is silenced by
+ * the ringer/silent switch. An <audio> element fed by a generated WAV blob is
+ * treated as media playback in an installed PWA on iOS, giving us a much
+ * better chance of playing through silent mode.
+ */
 function playAlarm(volume = 1) {
+  const v = Math.max(0, Math.min(1, volume));
+  if (v === 0) return;
   try {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return;
-    const ctx = new AC();
-    const now = ctx.currentTime;
-    // volume is 0..1; 1.0 = the original default amplitude.
-    const v = Math.max(0, Math.min(1, volume));
-    if (v === 0) return;
-    const tone = (freq, start, dur, baseVol = 0.22) => {
-      const vol = baseVol * v;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain); gain.connect(ctx.destination);
-      osc.type = 'sine'; osc.frequency.value = freq;
-      gain.gain.setValueAtTime(0, now + start);
-      gain.gain.linearRampToValueAtTime(vol, now + start + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + start + dur);
-      osc.start(now + start); osc.stop(now + start + dur + 0.05);
-    };
-    tone(784, 0.00, 0.55);
-    tone(988, 0.16, 0.55);
-    tone(1175, 0.32, 0.85);
+    const wav = buildChimeWav(v);
+    const blob = new Blob([wav], { type: 'audio/wav' });
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio();
+    audio.preload = 'auto';
+    audio.playsInline = true;
+    audio.setAttribute('playsinline', '');
+    audio.setAttribute('webkit-playsinline', '');
+    audio.src = url;
+    const cleanup = () => { try { URL.revokeObjectURL(url); } catch {} };
+    audio.addEventListener('ended', cleanup, { once: true });
+    audio.addEventListener('error', cleanup, { once: true });
+    const p = audio.play();
+    if (p && typeof p.catch === 'function') {
+      p.catch((e) => { console.error('audio play failed', e); cleanup(); });
+    }
   } catch (e) { console.error('alarm failed', e); }
+}
+
+/* Build a 16-bit PCM mono WAV ArrayBuffer for the 3-note chime. */
+function buildChimeWav(volume) {
+  const sampleRate = 44100;
+  const totalDur = 1.25; // seconds
+  const n = Math.floor(sampleRate * totalDur);
+  const bytesPerSample = 2;
+  const headerSize = 44;
+  const buf = new ArrayBuffer(headerSize + n * bytesPerSample);
+  const view = new DataView(buf);
+
+  const writeStr = (offset, s) => {
+    for (let i = 0; i < s.length; i++) view.setUint8(offset + i, s.charCodeAt(i));
+  };
+
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + n * bytesPerSample, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);     // fmt chunk size
+  view.setUint16(20, 1, true);      // PCM
+  view.setUint16(22, 1, true);      // mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * bytesPerSample, true); // byte rate
+  view.setUint16(32, bytesPerSample, true);              // block align
+  view.setUint16(34, 16, true);                          // bits per sample
+  writeStr(36, 'data');
+  view.setUint32(40, n * bytesPerSample, true);
+
+  const tones = [
+    { freq: 784,  start: 0.00, dur: 0.55 },
+    { freq: 988,  start: 0.16, dur: 0.55 },
+    { freq: 1175, start: 0.32, dur: 0.85 },
+  ];
+  const baseVol = 0.22;
+
+  for (let i = 0; i < n; i++) {
+    const t = i / sampleRate;
+    let sample = 0;
+    for (const tone of tones) {
+      const lt = t - tone.start;
+      if (lt < 0 || lt > tone.dur) continue;
+      // 20ms linear attack, then exponential decay to ~0 over the rest.
+      let env;
+      if (lt < 0.02) {
+        env = lt / 0.02;
+      } else {
+        const decayT = lt - 0.02;
+        const decayDur = Math.max(0.001, tone.dur - 0.02);
+        env = Math.pow(0.0001, decayT / decayDur);
+      }
+      sample += Math.sin(2 * Math.PI * tone.freq * t) * baseVol * env;
+    }
+    sample *= volume;
+    if (sample > 1) sample = 1;
+    else if (sample < -1) sample = -1;
+    view.setInt16(headerSize + i * bytesPerSample, Math.round(sample * 0x7FFF), true);
+  }
+
+  return buf;
 }
 
 function useWakeLock(active) {
@@ -1684,7 +1748,7 @@ const GROWTH_OPTIONS = [
 function SettingsView({
   volume, notificationsEnabled, growthIntensity, notifPermission,
   onVolumeChange, onNotificationsChange, onGrowthIntensityChange,
-  onPreviewSound, onBack,
+  onPreviewSound, onTestNotification, onBack,
 }) {
   const disabled = !notificationsEnabled;
 
@@ -1786,14 +1850,24 @@ function SettingsView({
               aria-label="Volume"
               disabled={disabled}
             />
-            <button
-              onClick={onPreviewSound}
-              className="btn-ghost text-xs mt-2"
-              style={{ color: 'var(--ink-soft)' }}
-              disabled={disabled}
-            >
-              Play test tone
-            </button>
+            <div className="flex gap-2 mt-2 flex-wrap">
+              <button
+                onClick={onPreviewSound}
+                className="btn-ghost text-xs"
+                style={{ color: 'var(--ink-soft)' }}
+                disabled={disabled}
+              >
+                Play test tone
+              </button>
+              <button
+                onClick={onTestNotification}
+                className="btn-ghost text-xs"
+                style={{ color: 'var(--ink-soft)' }}
+                disabled={disabled}
+              >
+                Test notification
+              </button>
+            </div>
           </div>
         </div>
 
@@ -2137,6 +2211,23 @@ export default function App() {
     }
   };
 
+  const handleTestNotification = async () => {
+    if (!notificationsSupported()) {
+      alert("This browser can't show system notifications. On iPhone, install this app to your home screen and open it there.");
+      return;
+    }
+    let perm = Notification.permission;
+    if (perm === 'default') {
+      perm = await requestNotificationPermission();
+      setNotifPermission(perm);
+    }
+    if (perm === 'granted') {
+      fireSystemNotification('Test notification', 'This is what a phase-end alert looks like.');
+    } else if (perm === 'denied') {
+      alert('Notifications are blocked. Enable them for this site in your browser or iOS settings.');
+    }
+  };
+
   const handleStartSetup = () => setView('setup');
 
   const handleBeginSession = (draft) => {
@@ -2350,6 +2441,7 @@ export default function App() {
             onNotificationsChange={handleNotificationsChange}
             onGrowthIntensityChange={setGrowthIntensity}
             onPreviewSound={() => playAlarm(volume / 100)}
+            onTestNotification={handleTestNotification}
             onBack={() => setView('home')}
           />
         ) : view === 'setup' ? (
