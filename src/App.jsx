@@ -4,7 +4,8 @@ import {
   Play, Pause, SkipForward, X, Volume2, VolumeX, Shuffle,
   ChevronLeft, RotateCcw, Check, Download, Upload, Clock, ChevronRight,
   Pencil, Trash2, Plus, Target, TrendingUp, TrendingDown, Info,
-  DoorOpen, Heart, Share, MoreVertical
+  DoorOpen, Heart, Share, MoreVertical, Settings as SettingsIcon,
+  Bell, BellOff, Gauge
 } from 'lucide-react';
 
 /* =====================================================================
@@ -136,8 +137,11 @@ function roundDuration(seconds) {
 }
 
 /* ---- Next-rehearsal suggestion ---- */
+const GROWTH_MULTIPLIERS = { slow: 0.5, typical: 1.0, fast: 1.5 };
+
 function computeNextRehearsal(history, opts = {}) {
-  const { forceShakeUp = false } = opts;
+  const { forceShakeUp = false, growthIntensity = 'typical' } = opts;
+  const growthMult = GROWTH_MULTIPLIERS[growthIntensity] ?? 1.0;
 
   if (!history || history.length === 0) {
     return { seconds: 300, reason: 'Start with 5 minutes.', kind: 'fresh' };
@@ -248,6 +252,9 @@ function computeNextRehearsal(history, opts = {}) {
     else increment = 120;
   }
 
+  // Scale by growth intensity, then quantise to 15s so durations stay "clean".
+  const scaled = Math.max(15, Math.round((increment * growthMult) / 15) * 15);
+
   const ratingLabel = last.rating === 1 ? 'Great' : last.rating === 2 ? 'Good' : null;
   let reason;
   if (recoveredFromShakeUp) {
@@ -258,7 +265,7 @@ function computeNextRehearsal(history, opts = {}) {
     reason = ratingLabel ? `Small step up after ${ratingLabel}.` : 'Small step up.';
   }
 
-  return { seconds: basis + increment, reason, kind: 'step-up' };
+  return { seconds: basis + scaled, reason, kind: 'step-up' };
 }
 
 /* ---- Goal heuristics ----
@@ -268,7 +275,8 @@ function computeNextRehearsal(history, opts = {}) {
    generalised linear step-up. We assume "Great" (rating 1) for synthetic
    future sessions, which yields an optimistic-but-realistic trajectory.
 */
-function simulateProjection(history, goalSeconds, maxSteps = Infinity) {
+function simulateProjection(history, goalSeconds, maxSteps = Infinity, opts = {}) {
+  const { growthIntensity = 'typical' } = opts;
   if (!history || history.length === 0) return [];
   const sorted = [...history].sort((a, b) => a.number - b.number);
   const current = sorted[sorted.length - 1].rehearsalSeconds;
@@ -282,7 +290,7 @@ function simulateProjection(history, goalSeconds, maxSteps = Infinity) {
   while (out.length < maxSteps && out.length < HARD_CAP) {
     const last = simHistory[simHistory.length - 1];
     if (last.rehearsalSeconds >= goalSeconds) break;
-    const next = computeNextRehearsal(simHistory);
+    const next = computeNextRehearsal(simHistory, { growthIntensity });
     lastNum += 1;
     out.push({ number: lastNum, seconds: next.seconds, kind: next.kind });
     simHistory = [
@@ -299,19 +307,19 @@ function simulateProjection(history, goalSeconds, maxSteps = Infinity) {
   return out;
 }
 
-function estimateSessionsToGoal(history, goalSeconds) {
+function estimateSessionsToGoal(history, goalSeconds, opts = {}) {
   if (!history || history.length === 0) return null;
   const sorted = [...history].sort((a, b) => a.number - b.number);
   const current = sorted[sorted.length - 1].rehearsalSeconds;
   if (current >= goalSeconds) return 0;
-  const proj = simulateProjection(history, goalSeconds);
+  const proj = simulateProjection(history, goalSeconds, Infinity, opts);
   if (!proj.length) return null;
   const last = proj[proj.length - 1];
   if (last.seconds < goalSeconds) return null; // capped out, unreachable
   return proj.length;
 }
 
-function computeGoalProgress(history, goalSeconds) {
+function computeGoalProgress(history, goalSeconds, opts = {}) {
   if (!history || history.length === 0) {
     return { current: 0, percent: 0, estimate: null, trend: 'no-data' };
   }
@@ -328,7 +336,7 @@ function computeGoalProgress(history, goalSeconds) {
     return { current, percent, estimate: null, trend: 'no-data' };
   }
 
-  const estimate = estimateSessionsToGoal(history, goalSeconds);
+  const estimate = estimateSessionsToGoal(history, goalSeconds, opts);
   return { current, percent, estimate, trend: 'increasing' };
 }
 
@@ -356,14 +364,62 @@ function storageDelete(key) {
   try { localStorage.removeItem(key); } catch {}
 }
 
+/* ---- notifications ---- */
+function notificationsSupported() {
+  return typeof window !== 'undefined' && 'Notification' in window;
+}
+function getNotificationPermission() {
+  if (!notificationsSupported()) return 'unsupported';
+  return Notification.permission; // 'default' | 'granted' | 'denied'
+}
+async function requestNotificationPermission() {
+  if (!notificationsSupported()) return 'unsupported';
+  try {
+    const result = await Notification.requestPermission();
+    return result;
+  } catch {
+    return Notification.permission;
+  }
+}
+function fireSystemNotification(title, body) {
+  if (!notificationsSupported()) return false;
+  if (Notification.permission !== 'granted') return false;
+  try {
+    new Notification(title, { body, icon: '/departures-app/icon-192.png' });
+    return true;
+  } catch (e) {
+    console.error('notification failed', e);
+    return false;
+  }
+}
+
+// Unified alerting: chime if the app is visible, system notification otherwise.
+// Falls back to the chime when system notifications aren't available so the
+// user never ends up with no signal at all.
+function firePhaseEndAlert({ notificationsEnabled, volume, title, body }) {
+  if (!notificationsEnabled) return;
+  const volMult = Math.max(0, Math.min(100, volume)) / 100;
+  const isVisible = typeof document !== 'undefined' && document.visibilityState === 'visible';
+  if (isVisible) {
+    playAlarm(volMult);
+  } else {
+    const fired = fireSystemNotification(title, body);
+    if (!fired) playAlarm(volMult);
+  }
+}
+
 /* ---- alarm ---- */
-function playAlarm() {
+function playAlarm(volume = 1) {
   try {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     const ctx = new AC();
     const now = ctx.currentTime;
-    const tone = (freq, start, dur, vol = 0.22) => {
+    // volume is 0..1; 1.0 = the original default amplitude.
+    const v = Math.max(0, Math.min(1, volume));
+    if (v === 0) return;
+    const tone = (freq, start, dur, baseVol = 0.22) => {
+      const vol = baseVol * v;
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.connect(gain); gain.connect(ctx.destination);
@@ -519,11 +575,65 @@ const HOME_KIND_META = {
   'fresh':     { Icon: Play,         label: 'first session',    color: 'var(--ink-muted)' },
 };
 
+// --- DEV-ONLY: remove this whole component before merging to main. ---
+function DevNotifTest({ notificationsEnabled, volume, notifPermission }) {
+  const [countdown, setCountdown] = useState(null);
+
+  const fire = () => {
+    setCountdown(3);
+    let remaining = 3;
+    const tick = setInterval(() => {
+      remaining -= 1;
+      if (remaining > 0) {
+        setCountdown(remaining);
+      } else {
+        clearInterval(tick);
+        setCountdown(null);
+        firePhaseEndAlert({
+          notificationsEnabled,
+          volume,
+          title: 'Test phase complete',
+          body: 'This is a dev-mode notification test.',
+        });
+      }
+    }, 1000);
+  };
+
+  return (
+    <div
+      className="card p-4 mb-4"
+      style={{ border: '1.5px dashed var(--amber)', background: 'transparent' }}
+    >
+      <div className="text-xs tracking-widest uppercase mb-2" style={{ color: 'var(--amber)' }}>
+        DEV · Notification test
+      </div>
+      <div className="text-xs mb-3" style={{ color: 'var(--ink-muted)' }}>
+        Permission: <span style={{ fontFamily: 'monospace' }}>{notifPermission ?? 'unsupported'}</span>
+        {' · '}
+        Toggle: <span style={{ fontFamily: 'monospace' }}>{notificationsEnabled ? 'on' : 'off'}</span>
+      </div>
+      <button
+        onClick={fire}
+        disabled={countdown !== null}
+        className="btn-secondary w-full text-sm py-2 rounded-full"
+      >
+        {countdown !== null ? `Firing in ${countdown}…` : 'Fire phase-end alert in 3s'}
+      </button>
+      <div className="text-xs mt-2 italic" style={{ color: 'var(--ink-muted)' }}>
+        Tap, then switch to another app within 3 s to test the system-notification path.
+        Stay on this screen to hear the chime.
+      </div>
+    </div>
+  );
+}
+// --- end DEV block ---
+
 function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSeconds, goalProgress,
-                onStart, onHistory, onShowOnboarding, soundEnabled, toggleSound,
+                onStart, onHistory, onShowOnboarding, onSettings, growthIntensity = 'typical',
+                notificationsEnabled, volume, notifPermission,
                 resumable, onResume, onDiscardActive }) {
   const hasHistory = history && history.length > 0;
-  const projection = hasHistory ? simulateProjection(history, goalSeconds, 5) : [];
+  const projection = hasHistory ? simulateProjection(history, goalSeconds, 5, { growthIntensity }) : [];
   const kindMeta = HOME_KIND_META[suggestion?.kind] || HOME_KIND_META['step-up'];
   const KindIcon = kindMeta.Icon;
 
@@ -537,8 +647,8 @@ function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSecon
           </button>
         }
         right={
-          <button onClick={toggleSound} className="btn-ghost p-2" aria-label="Toggle sound">
-            {soundEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
+          <button onClick={onSettings} className="btn-ghost p-2" aria-label="Settings">
+            <SettingsIcon size={20} />
           </button>
         }
       />
@@ -630,6 +740,16 @@ function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSecon
             </div>
           </div>
         )}
+
+        {/* DEV-ONLY: remove this block before merging to main. */}
+        {import.meta.env.DEV && (
+          <DevNotifTest
+            notificationsEnabled={notificationsEnabled}
+            volume={volume}
+            notifPermission={notifPermission}
+          />
+        )}
+        {/* end DEV block */}
 
         {/* Buttons pinned to bottom via mt-auto */}
         <div className="mt-auto shrink-0 pb-6 pt-4">
@@ -780,13 +900,29 @@ function Setup({ nextNumber, suggestion, onBack, onStart, shakeUpSuggestion }) {
 /* =====================================================================
    SESSION (running timer)
    ===================================================================== */
-function SessionView({ session, soundEnabled, toggleSound, onUpdate, onAbort, onComplete, askConfirm }) {
+function SessionView({ session, soundEnabled, toggleSound, volume = 100, onUpdate, onAbort, onComplete, askConfirm }) {
   const [now, setNow] = useState(Date.now());
   useWakeLock(session.phaseState === 'running');
 
   const phase = session.phases[session.currentPhaseIndex];
   const isLast = session.currentPhaseIndex >= session.phases.length - 1;
   const nextPhase = !isLast ? session.phases[session.currentPhaseIndex + 1] : null;
+
+  const alertPhaseEnd = (completedPhase, upcomingPhase) => {
+    const phaseName = completedPhase?.type === 'warmup' ? 'Warm-up'
+      : completedPhase?.type === 'rehearsal' ? 'Rehearsal'
+      : completedPhase?.type === 'settle' ? 'Settle'
+      : 'Phase';
+    const body = upcomingPhase
+      ? `Next: ${upcomingPhase.type === 'warmup' ? 'warm-up' : upcomingPhase.type}.`
+      : 'Session complete.';
+    firePhaseEndAlert({
+      notificationsEnabled: soundEnabled,
+      volume,
+      title: `${phaseName} complete`,
+      body,
+    });
+  };
 
   useEffect(() => {
     if (session.phaseState !== 'running') return;
@@ -797,7 +933,7 @@ function SessionView({ session, soundEnabled, toggleSound, onUpdate, onAbort, on
   useEffect(() => {
     if (session.phaseState !== 'running') return;
     if (now >= session.phaseEndTime) {
-      if (soundEnabled) playAlarm();
+      alertPhaseEnd(phase, nextPhase);
       onUpdate({ ...session, phaseState: 'complete', phaseEndTime: null });
     }
   }, [now, session, soundEnabled, onUpdate]);
@@ -811,7 +947,7 @@ function SessionView({ session, soundEnabled, toggleSound, onUpdate, onAbort, on
   const startTimer = () => {
     const dur = session.phaseState === 'paused' ? session.pausedRemaining : phase.durationSeconds;
     if (dur <= 0) {
-      if (soundEnabled) playAlarm();
+      alertPhaseEnd(phase, nextPhase);
       onUpdate({ ...session, phaseState: 'complete', phaseEndTime: null, pausedRemaining: null });
       return;
     }
@@ -1583,6 +1719,198 @@ function HistoryView({ history, goalSeconds, onChangeGoal, askConfirm,
 }
 
 /* =====================================================================
+   SETTINGS
+   ===================================================================== */
+const GROWTH_OPTIONS = [
+  {
+    id: 'slow',
+    emoji: '🐢',
+    label: 'Slow',
+    sub: 'Smaller steps, easier wins',
+    desc: "Each step up adds about half as much time as typical. Good if your dog is still new to practice, or you want to feel extra-confident before each increase.",
+  },
+  {
+    id: 'typical',
+    emoji: '🚶',
+    label: 'Typical',
+    sub: 'Balanced pace',
+    desc: "The default progression. Increments scale with your current duration — 30 s at short sessions, a few minutes once you're past 20 min.",
+  },
+  {
+    id: 'fast',
+    emoji: '🚀',
+    label: 'Fast',
+    sub: 'Bigger jumps between sessions',
+    desc: "About 1.5× the typical increment. Use if your dog is consistently rating Great and progress feels slower than it should.",
+  },
+];
+
+function SettingsView({
+  volume, notificationsEnabled, growthIntensity, notifPermission,
+  onVolumeChange, onNotificationsChange, onGrowthIntensityChange,
+  onPreviewSound, onBack,
+}) {
+  const disabled = !notificationsEnabled;
+
+  // Permission hint only matters when notifications are on
+  let permNote = null;
+  if (notificationsEnabled) {
+    if (notifPermission === 'denied') {
+      permNote = "System notifications are blocked. To get alerts when the app isn't open, enable notifications for this site in your browser or iOS settings.";
+    } else if (notifPermission === 'default') {
+      permNote = "Grant notification permission to get system alerts when the app isn't in the foreground.";
+    } else if (notifPermission === 'unsupported') {
+      permNote = "This browser can't show system notifications. Chimes will still play when the app is open. (On iPhone, install this app to your home screen and open it there for system alerts.)";
+    }
+  }
+
+  return (
+    <div className="fade-up flex flex-col flex-1 min-h-0">
+      <TopBar
+        title="SETTINGS"
+        left={<button onClick={onBack} className="btn-ghost p-2" aria-label="Back"><ChevronLeft size={22} /></button>}
+      />
+      <div className="flex-1 min-h-0 px-5 pb-6 overflow-y-auto scrollbar-thin">
+
+        {/* Notifications + Audio (merged) */}
+        <div className="card p-4 mb-4">
+          <div className="flex items-center gap-2 mb-3">
+            {notificationsEnabled ? <Bell size={16} style={{ color: 'var(--ink-muted)' }} /> : <BellOff size={16} style={{ color: 'var(--ink-muted)' }} />}
+            <div className="text-xs tracking-widest uppercase" style={{ color: 'var(--ink-muted)' }}>
+              Notifications
+            </div>
+          </div>
+
+          {/* Master toggle */}
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm" style={{ color: 'var(--ink)' }}>Phase-end alerts</div>
+              <div className="text-xs mt-0.5" style={{ color: 'var(--ink-muted)' }}>
+                Chime when the app is open; system notification when it isn't.
+              </div>
+            </div>
+            <button
+              role="switch"
+              aria-checked={notificationsEnabled}
+              onClick={() => onNotificationsChange(!notificationsEnabled)}
+              className="relative rounded-full transition-colors flex-shrink-0 ml-3"
+              style={{
+                width: 44,
+                height: 24,
+                background: notificationsEnabled ? 'var(--clay)' : 'var(--line)',
+              }}
+            >
+              <span
+                className="absolute top-0.5 bg-white rounded-full transition-transform"
+                style={{
+                  width: 20,
+                  height: 20,
+                  left: 2,
+                  transform: notificationsEnabled ? 'translateX(20px)' : 'translateX(0)',
+                  boxShadow: '0 1px 2px rgba(0,0,0,0.15)',
+                }}
+              />
+            </button>
+          </div>
+
+          {permNote && (
+            <div
+              className="text-xs mt-3 px-3 py-2 rounded-lg"
+              style={{
+                background: 'var(--bg-warm)',
+                color: 'var(--ink-soft)',
+                border: '1px solid var(--line)',
+              }}
+            >
+              {permNote}
+            </div>
+          )}
+
+          {/* Divider */}
+          <div className="my-4" style={{ borderTop: '1px solid var(--line)' }} />
+
+          {/* Volume (coupled to master toggle) */}
+          <div style={{ opacity: disabled ? 0.4 : 1, pointerEvents: disabled ? 'none' : 'auto' }}>
+            <div className="flex items-center gap-2 mb-2">
+              {volume > 0 && !disabled ? <Volume2 size={14} style={{ color: 'var(--ink-muted)' }} /> : <VolumeX size={14} style={{ color: 'var(--ink-muted)' }} />}
+              <div className="text-xs tracking-widest uppercase" style={{ color: 'var(--ink-muted)' }}>
+                Volume
+              </div>
+              <div className="serif tabular text-xs ml-auto" style={{ color: 'var(--ink-soft)' }}>{volume}%</div>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={volume}
+              onChange={(e) => onVolumeChange(parseInt(e.target.value, 10))}
+              className="w-full"
+              style={{ accentColor: 'var(--clay)' }}
+              aria-label="Volume"
+              disabled={disabled}
+            />
+            <button
+              onClick={onPreviewSound}
+              className="btn-ghost text-xs mt-2"
+              style={{ color: 'var(--ink-soft)' }}
+              disabled={disabled}
+            >
+              Play test tone
+            </button>
+          </div>
+        </div>
+
+        {/* Growth Intensity */}
+        <div className="card p-4 mb-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Gauge size={16} style={{ color: 'var(--ink-muted)' }} />
+            <div className="text-xs tracking-widest uppercase" style={{ color: 'var(--ink-muted)' }}>
+              Growth intensity
+            </div>
+          </div>
+          <div className="text-xs mb-3" style={{ color: 'var(--ink-muted)' }}>
+            How aggressively the next-rehearsal algorithm increases duration after a good session.
+          </div>
+          <div className="space-y-2">
+            {GROWTH_OPTIONS.map(opt => {
+              const active = growthIntensity === opt.id;
+              return (
+                <button
+                  key={opt.id}
+                  onClick={() => onGrowthIntensityChange(opt.id)}
+                  className="w-full text-left rounded-xl p-3 transition-all"
+                  style={{
+                    background: active ? 'var(--bg-warm)' : 'transparent',
+                    border: active ? '1.5px solid var(--clay)' : '1.5px solid var(--line)',
+                  }}
+                >
+                  <div className="flex items-baseline justify-between mb-0.5">
+                    <div className="flex items-center gap-2">
+                      <span style={{ fontSize: 18, lineHeight: 1 }}>{opt.emoji}</span>
+                      <div className="text-sm" style={{ color: 'var(--ink)', fontWeight: active ? 500 : 400 }}>
+                        {opt.label}
+                      </div>
+                    </div>
+                    <div className="text-xs" style={{ color: active ? 'var(--clay)' : 'var(--ink-muted)' }}>
+                      {opt.sub}
+                    </div>
+                  </div>
+                  <div className="text-xs leading-snug" style={{ color: 'var(--ink-soft)' }}>
+                    {opt.desc}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
+/* =====================================================================
    ONBOARDING
    ===================================================================== */
 function Onboarding({ onClose }) {
@@ -1777,7 +2105,10 @@ export default function App() {
   const [view, setView] = useState('home');
   const [history, setHistory] = useState(null);
   const [activeSession, setActiveSession] = useState(null);
-  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [volume, setVolume] = useState(80);
+  const [growthIntensity, setGrowthIntensity] = useState('typical');
+  const [notifPermission, setNotifPermission] = useState(() => getNotificationPermission());
   const [goalSeconds, setGoalSeconds] = useState(DEFAULT_GOAL_SECONDS);
   const [loaded, setLoaded] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
@@ -1812,7 +2143,18 @@ export default function App() {
 
     const settings = storageGet('settings');
     if (settings) {
-      if (typeof settings.soundEnabled === 'boolean') setSoundEnabled(settings.soundEnabled);
+      // Back-compat: old `soundEnabled` key maps to new `notificationsEnabled`
+      if (typeof settings.notificationsEnabled === 'boolean') {
+        setNotificationsEnabled(settings.notificationsEnabled);
+      } else if (typeof settings.soundEnabled === 'boolean') {
+        setNotificationsEnabled(settings.soundEnabled);
+      }
+      if (typeof settings.volume === 'number') {
+        setVolume(Math.max(0, Math.min(100, Math.round(settings.volume))));
+      }
+      if (['slow', 'typical', 'fast'].includes(settings.growthIntensity)) {
+        setGrowthIntensity(settings.growthIntensity);
+      }
       if (typeof settings.goalSeconds === 'number' && settings.goalSeconds > 0) {
         setGoalSeconds(settings.goalSeconds);
       }
@@ -1833,16 +2175,31 @@ export default function App() {
 
   useEffect(() => {
     if (!loaded) return;
-    storageSet('settings', { soundEnabled, goalSeconds });
-  }, [soundEnabled, goalSeconds, loaded]);
+    storageSet('settings', {
+      notificationsEnabled,
+      volume,
+      growthIntensity,
+      goalSeconds,
+    });
+  }, [notificationsEnabled, volume, growthIntensity, goalSeconds, loaded]);
 
   const nextNumber = history ? (history.length ? Math.max(...history.map(s => s.number)) + 1 : 1) : 1;
-  const goalProgress = computeGoalProgress(history || [], goalSeconds);
-  const autoSuggestion = computeNextRehearsal(history || []);
+  const goalProgress = computeGoalProgress(history || [], goalSeconds, { growthIntensity });
+  const autoSuggestion = computeNextRehearsal(history || [], { growthIntensity });
   // Always have a shake-up fallback available if the auto-suggestion isn't already one
   const shakeUpSuggestion = autoSuggestion.kind === 'shake-up'
     ? null
-    : computeNextRehearsal(history || [], { forceShakeUp: true });
+    : computeNextRehearsal(history || [], { forceShakeUp: true, growthIntensity });
+
+  const handleNotificationsChange = async (enabled) => {
+    setNotificationsEnabled(enabled);
+    if (enabled && notificationsSupported() && Notification.permission === 'default') {
+      const result = await requestNotificationPermission();
+      setNotifPermission(result);
+    } else {
+      setNotifPermission(getNotificationPermission());
+    }
+  };
 
   const handleStartSetup = () => setView('setup');
 
@@ -2041,11 +2398,26 @@ export default function App() {
             onStart={handleStartSetup}
             onHistory={() => setView('history')}
             onShowOnboarding={showOnboarding}
-            soundEnabled={soundEnabled}
-            toggleSound={() => setSoundEnabled(s => !s)}
+            onSettings={() => setView('settings')}
+            growthIntensity={growthIntensity}
+            notificationsEnabled={notificationsEnabled}
+            volume={volume}
+            notifPermission={notifPermission}
             resumable={activeSession}
             onResume={handleResume}
             onDiscardActive={handleDiscardActive}
+          />
+        ) : view === 'settings' ? (
+          <SettingsView
+            volume={volume}
+            notificationsEnabled={notificationsEnabled}
+            growthIntensity={growthIntensity}
+            notifPermission={notifPermission}
+            onVolumeChange={setVolume}
+            onNotificationsChange={handleNotificationsChange}
+            onGrowthIntensityChange={setGrowthIntensity}
+            onPreviewSound={() => playAlarm(volume / 100)}
+            onBack={() => setView('home')}
           />
         ) : view === 'setup' ? (
           <Setup
@@ -2058,8 +2430,9 @@ export default function App() {
         ) : view === 'session' && activeSession ? (
           <SessionView
             session={activeSession}
-            soundEnabled={soundEnabled}
-            toggleSound={() => setSoundEnabled(s => !s)}
+            soundEnabled={notificationsEnabled}
+            toggleSound={() => setNotificationsEnabled(s => !s)}
+            volume={volume}
             onUpdate={handleSessionUpdate}
             onAbort={handleAbort}
             onComplete={handleComplete}
