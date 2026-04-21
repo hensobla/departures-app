@@ -511,11 +511,21 @@ function TopBar({ left, right, title }) {
 /* =====================================================================
    HOME
    ===================================================================== */
-function Home({ nextRehearsalSeconds, history, goalSeconds, goalProgress,
+const HOME_KIND_META = {
+  'step-up':   { Icon: TrendingUp,   label: 'step up',          color: 'var(--sage)' },
+  'step-back': { Icon: TrendingDown, label: 'step back',        color: 'var(--amber)' },
+  'shake-up':  { Icon: Shuffle,      label: 'shake-up',         color: 'var(--gold)' },
+  'repeat':    { Icon: RotateCcw,    label: 'repeat',           color: 'var(--amber)' },
+  'fresh':     { Icon: Play,         label: 'first session',    color: 'var(--ink-muted)' },
+};
+
+function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSeconds, goalProgress,
                 onStart, onHistory, onShowOnboarding, soundEnabled, toggleSound,
                 resumable, onResume, onDiscardActive }) {
   const hasHistory = history && history.length > 0;
   const projection = hasHistory ? simulateProjection(history, goalSeconds, 5) : [];
+  const kindMeta = HOME_KIND_META[suggestion?.kind] || HOME_KIND_META['step-up'];
+  const KindIcon = kindMeta.Icon;
 
   return (
     <div className="fade-up flex flex-col flex-1 min-h-0">
@@ -532,43 +542,76 @@ function Home({ nextRehearsalSeconds, history, goalSeconds, goalProgress,
           </button>
         }
       />
-      <div className="flex-1 min-h-0 flex flex-col px-6 overflow-y-auto">
-        <div className="flex-1 flex flex-col justify-center py-6">
-          <div className="mb-1 text-xs tracking-widest uppercase" style={{ color: 'var(--ink-muted)' }}>Next rehearsal time</div>
-          <div className="serif text-7xl leading-none mb-4 tabular" style={{ fontWeight: 500, color: 'var(--clay)' }}>
+      <div className="flex-1 min-h-0 flex flex-col px-6 pt-4 overflow-y-auto scrollbar-thin">
+
+        {/* Hero: session label · big time · kind subcaption */}
+        <div className="mb-5">
+          <div className="text-xs tracking-widest uppercase mb-1" style={{ color: 'var(--ink-muted)' }}>
+            Next rehearsal · Session {nextNumber}
+          </div>
+          <div
+            className="serif text-7xl leading-none tabular"
+            style={{ fontWeight: 500, color: 'var(--clay)' }}
+          >
             {formatTimeLong(nextRehearsalSeconds)}
           </div>
+          <div className="mt-2 flex items-center gap-1.5 text-xs" style={{ color: 'var(--ink-soft)' }}>
+            <KindIcon size={12} style={{ color: kindMeta.color }} />
+            <span className="uppercase tracking-wider" style={{ color: kindMeta.color, fontWeight: 500 }}>
+              {kindMeta.label}
+            </span>
+            <span style={{ color: 'var(--ink-muted)' }}>·</span>
+            <span className="serif italic">{suggestion?.reason}</span>
+          </div>
+        </div>
 
-          {hasHistory && (
-            <div className="mb-6">
-              <ProgressionChart
-                history={history}
-                goalSeconds={goalSeconds}
-                projection={projection}
-                compact
-                height={120}
-                historyTake={3}
-              />
-            </div>
-          )}
-
-          <div className="mb-2">
+        {/* Trajectory card: chart + goal + estimate, anchored together */}
+        {hasHistory ? (
+          <div className="card p-4 mb-4">
             <div className="flex items-baseline justify-between mb-2">
-              <div className="text-xs tracking-widest uppercase flex items-center gap-1.5" style={{ color: 'var(--ink-muted)' }}>
-                <Target size={11} /> Goal {formatTimeLong(goalSeconds)}
+              <div className="text-xs tracking-widest uppercase" style={{ color: 'var(--ink-muted)' }}>
+                Trajectory
               </div>
               <div className="serif tabular text-sm" style={{ color: 'var(--ink-soft)' }}>
                 {goalProgress.percent}%
               </div>
             </div>
-            <div className="progress-track mb-3">
+            <ProgressionChart
+              history={history}
+              goalSeconds={goalSeconds}
+              projection={projection}
+              compact
+              height={110}
+              historyTake={3}
+            />
+            <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--line)' }}>
+              <div className="flex items-center gap-1.5 text-xs mb-2" style={{ color: 'var(--ink-muted)' }}>
+                <Target size={11} />
+                <span className="tracking-widest uppercase">Goal {formatTimeLong(goalSeconds)}</span>
+              </div>
+              <div className="progress-track mb-2">
+                <div className="progress-fill" style={{ width: `${goalProgress.percent}%` }} />
+              </div>
+              <div className="serif italic text-sm" style={{ color: 'var(--ink-soft)' }}>
+                {estimateText(goalProgress)}
+              </div>
+            </div>
+          </div>
+        ) : (
+          /* No history yet: goal card stands alone */
+          <div className="card p-4 mb-4">
+            <div className="flex items-center gap-1.5 text-xs mb-2" style={{ color: 'var(--ink-muted)' }}>
+              <Target size={11} />
+              <span className="tracking-widest uppercase">Goal {formatTimeLong(goalSeconds)}</span>
+            </div>
+            <div className="progress-track mb-2">
               <div className="progress-fill" style={{ width: `${goalProgress.percent}%` }} />
             </div>
             <div className="serif italic text-sm" style={{ color: 'var(--ink-soft)' }}>
               {estimateText(goalProgress)}
             </div>
           </div>
-        </div>
+        )}
 
         {resumable && (
           <div className="card p-4 mb-4" style={{ borderColor: 'var(--amber)', background: '#FDF6EA' }}>
@@ -588,9 +631,14 @@ function Home({ nextRehearsalSeconds, history, goalSeconds, goalProgress,
           </div>
         )}
 
-        <div className="shrink-0 pb-6 pt-2">
-          <button onClick={onStart} className="btn-primary w-full py-5 rounded-full text-lg mb-3">Start session</button>
-          <button onClick={onHistory} className="btn-ghost py-3 text-sm w-full">View history →</button>
+        {/* Buttons pinned to bottom via mt-auto */}
+        <div className="mt-auto shrink-0 pb-6 pt-4">
+          <button onClick={onStart} className="btn-primary w-full py-5 rounded-full text-lg mb-2">
+            Start session
+          </button>
+          <button onClick={onHistory} className="btn-ghost py-2 text-sm w-full">
+            View history →
+          </button>
         </div>
       </div>
     </div>
@@ -1351,25 +1399,28 @@ function ProgressionChart({
         <ResponsiveContainer>
           <LineChart
             data={chartData}
-            margin={compact ? { top: 8, right: 6, left: -30, bottom: 0 } : { top: 8, right: 12, left: -24, bottom: 0 }}
+            margin={compact ? { top: 10, right: 10, left: 10, bottom: 4 } : { top: 8, right: 12, left: -24, bottom: 0 }}
           >
             <CartesianGrid stroke="#D9CEB8" strokeDasharray="2 4" vertical={false} />
             <XAxis
               dataKey="session"
+              hide={compact}
               tick={{ fontSize: 10, fill: '#8B7B6C' }}
               axisLine={{ stroke: '#D9CEB8' }}
               tickLine={false}
               tickFormatter={(n) => `#${n}`}
-              minTickGap={compact ? 10 : (chartRange === '7' ? 0 : 16)}
+              minTickGap={chartRange === '7' ? 0 : 16}
               interval="preserveStartEnd"
+              padding={{ left: 8, right: 8 }}
             />
             <YAxis
+              hide={compact}
+              width={compact ? 0 : undefined}
               tick={{ fontSize: 10, fill: '#8B7B6C' }}
               axisLine={false}
               tickLine={false}
               unit="m"
               domain={[0, yMax]}
-              width={compact ? 32 : undefined}
             />
             <Tooltip content={tooltipContent} />
             <ReferenceLine
@@ -1982,6 +2033,8 @@ export default function App() {
         ) : view === 'home' ? (
           <Home
             nextRehearsalSeconds={autoSuggestion.seconds}
+            nextNumber={nextNumber}
+            suggestion={autoSuggestion}
             history={history}
             goalSeconds={goalSeconds}
             goalProgress={goalProgress}
