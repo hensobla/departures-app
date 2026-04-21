@@ -192,35 +192,73 @@ function computeNextRehearsal(history, opts = {}) {
     }
   }
 
-  // Otherwise, a graduated increment by rating + magnitude
+  // Otherwise, a graduated increment by rating + magnitude.
+  //
+  // If the last session was a shake-up (shorter than what preceded it, and
+  // that predecessor was acceptable — i.e. not a Bad-triggered step-back),
+  // resume building from the *pre-shake-up peak* rather than the shake-up
+  // duration itself. Otherwise each shake-up would erase the progress it was
+  // meant to just playfully interrupt.
+  //
+  // The peak window is bounded two ways so we don't un-do a therapeutic
+  // step-back: (a) it starts AFTER the most recent Bad rating, and (b) it
+  // looks at the last 5 sessions max.
+  let basis = lastSecs;
+  let recoveredFromShakeUp = false;
+  if (sorted.length >= 2) {
+    const prev = sorted[sorted.length - 2];
+    const isPostShakeUp =
+      isAcceptable(prev.rating) && lastSecs < prev.rehearsalSeconds;
+    if (isPostShakeUp) {
+      let lastBadIdx = -1;
+      for (let i = sorted.length - 1; i >= 0; i--) {
+        if (sorted[i].rating === 4) { lastBadIdx = i; break; }
+      }
+      const windowStart = Math.max(lastBadIdx + 1, sorted.length - 5);
+      const windowPeak = sorted
+        .slice(windowStart)
+        .filter(s => isAcceptable(s.rating))
+        .reduce((m, s) => Math.max(m, s.rehearsalSeconds), 0);
+      if (windowPeak > basis) {
+        basis = windowPeak;
+        recoveredFromShakeUp = true;
+      }
+    }
+  }
+
   let increment;
   if (last.rating === 1) {
     // Great: moderate bump
-    if (lastSecs < 300) increment = 30;
-    else if (lastSecs < 600) increment = 60;
-    else if (lastSecs < 1200) increment = 120;
-    else if (lastSecs < 1800) increment = 180;
+    if (basis < 300) increment = 30;
+    else if (basis < 600) increment = 60;
+    else if (basis < 1200) increment = 120;
+    else if (basis < 1800) increment = 180;
     else increment = 300;
   } else if (last.rating === 2) {
     // Good: small bump
-    if (lastSecs < 300) increment = 15;
-    else if (lastSecs < 600) increment = 30;
-    else if (lastSecs < 1200) increment = 60;
-    else if (lastSecs < 1800) increment = 90;
+    if (basis < 300) increment = 15;
+    else if (basis < 600) increment = 30;
+    else if (basis < 1200) increment = 60;
+    else if (basis < 1800) increment = 90;
     else increment = 120;
   } else {
     // Unrated (seed data): conservative default
-    if (lastSecs < 600) increment = 30;
-    else if (lastSecs < 1200) increment = 60;
+    if (basis < 600) increment = 30;
+    else if (basis < 1200) increment = 60;
     else increment = 120;
   }
 
   const ratingLabel = last.rating === 1 ? 'Great' : last.rating === 2 ? 'Good' : null;
-  const reason = ratingLabel
-    ? `Small step up after ${ratingLabel}.`
-    : 'Small step up.';
+  let reason;
+  if (recoveredFromShakeUp) {
+    reason = ratingLabel
+      ? `Back to pre-shake-up pace after ${ratingLabel}.`
+      : 'Back to pre-shake-up pace.';
+  } else {
+    reason = ratingLabel ? `Small step up after ${ratingLabel}.` : 'Small step up.';
+  }
 
-  return { seconds: lastSecs + increment, reason, kind: 'step-up' };
+  return { seconds: basis + increment, reason, kind: 'step-up' };
 }
 
 /* ---- Goal heuristics ----
