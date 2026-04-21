@@ -1283,23 +1283,35 @@ function EditSession({ session, onBack, onSave, onDelete, askConfirm }) {
    ===================================================================== */
 function GoalCard({ goalSeconds, onChange, askConfirm }) {
   const [editing, setEditing] = useState(false);
-  const [draftStr, setDraftStr] = useState(formatTimeLong(goalSeconds));
+  const initialH = Math.floor(goalSeconds / 3600);
+  const initialM = Math.floor((goalSeconds % 3600) / 60);
+  const [hDraft, setHDraft] = useState(String(initialH));
+  const [mDraft, setMDraft] = useState(String(initialM));
 
   const startEdit = () => {
-    setDraftStr(formatTimeLong(goalSeconds));
+    const h = Math.floor(goalSeconds / 3600);
+    const m = Math.floor((goalSeconds % 3600) / 60);
+    setHDraft(String(h));
+    setMDraft(String(m));
     setEditing(true);
   };
   const save = async () => {
-    const parsed = parseMMSS(draftStr);
-    if (parsed === null || parsed <= 0) {
+    // Accept empty as 0 so users can edit freely without deleting the field first.
+    const h = hDraft === '' ? 0 : parseInt(hDraft, 10);
+    const m = mDraft === '' ? 0 : parseInt(mDraft, 10);
+    const valid =
+      Number.isFinite(h) && h >= 0 && h <= 23 &&
+      Number.isFinite(m) && m >= 0 && m <= 59 &&
+      (h > 0 || m > 0);
+    if (!valid) {
       await askConfirm({
         title: 'Invalid goal',
-        message: 'Use mm:ss or h:mm:ss format (e.g. 1:00:00 for one hour, 30:00 for thirty minutes).',
+        message: 'Enter a positive duration. Hours 0–23, minutes 0–59.',
         confirmLabel: 'OK', cancelLabel: ' ',
       });
       return;
     }
-    onChange(parsed);
+    onChange(h * 3600 + m * 60);
     setEditing(false);
   };
   const cancel = () => { setEditing(false); };
@@ -1312,14 +1324,27 @@ function GoalCard({ goalSeconds, onChange, askConfirm }) {
           Rehearsal goal
         </div>
         {editing ? (
-          <input
-            type="text" inputMode="numeric" value={draftStr}
-            onChange={e => setDraftStr(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') cancel(); }}
-            autoFocus placeholder="1:00:00"
-            className="input-text serif tabular text-2xl py-1 px-2 rounded-lg w-full"
-            style={{ fontWeight: 500 }}
-          />
+          <div className="flex items-baseline gap-1 flex-wrap">
+            <input
+              type="text" inputMode="numeric" value={hDraft}
+              onChange={e => setHDraft(e.target.value.replace(/[^\d]/g, '').slice(0, 2))}
+              onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') cancel(); }}
+              autoFocus
+              aria-label="Hours"
+              className="input-text serif tabular text-2xl py-1 px-2 rounded-lg text-center"
+              style={{ fontWeight: 500, width: '3.5rem' }}
+            />
+            <span className="serif text-base" style={{ color: 'var(--ink-muted)' }}>h</span>
+            <input
+              type="text" inputMode="numeric" value={mDraft}
+              onChange={e => setMDraft(e.target.value.replace(/[^\d]/g, '').slice(0, 2))}
+              onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') cancel(); }}
+              aria-label="Minutes"
+              className="input-text serif tabular text-2xl py-1 px-2 rounded-lg text-center ml-1"
+              style={{ fontWeight: 500, width: '3.5rem' }}
+            />
+            <span className="serif text-base" style={{ color: 'var(--ink-muted)' }}>m</span>
+          </div>
         ) : (
           <div className="serif tabular text-2xl" style={{ fontWeight: 500 }}>
             {formatTimeLong(goalSeconds)}
@@ -1661,9 +1686,12 @@ function HistoryView({ history, goalSeconds, onChangeGoal, askConfirm,
             const originalIdx = history.findIndex(h => h === s);
             const rc = ratingColor(s.rating);
             return (
-              <div
+              <button
                 key={`${s.number}-${idx}`}
-                className="card p-4 flex items-center"
+                type="button"
+                onClick={() => onEdit(s, originalIdx)}
+                aria-label={`Edit session ${s.number}`}
+                className="card p-4 flex items-center w-full text-left hover:border-[color:var(--ink-muted)] transition-colors"
                 style={{ borderLeft: rc ? `4px solid ${rc}` : undefined }}
               >
                 <div className="serif tabular text-3xl w-14" style={{ fontWeight: 500 }}>{s.number}</div>
@@ -1683,7 +1711,7 @@ function HistoryView({ history, goalSeconds, onChangeGoal, askConfirm,
                     {s.warmUps.length} warm-ups · {s.warmUps.map(w => `${w}s`).join(', ')}
                   </div>
                   {s.notes && (
-                    <div className="text-xs italic mt-1" style={{ color: 'var(--ink-soft)' }}>
+                    <div className="text-xs italic mt-1 truncate" style={{ color: 'var(--ink-soft)' }}>
                       "{s.notes}"
                     </div>
                   )}
@@ -1691,10 +1719,10 @@ function HistoryView({ history, goalSeconds, onChangeGoal, askConfirm,
                 <div className="serif tabular text-xl pr-2" style={{ color: 'var(--clay)' }}>
                   {formatTime(s.rehearsalSeconds)}
                 </div>
-                <button onClick={() => onEdit(s, originalIdx)} className="btn-ghost p-2" aria-label="Edit session">
+                <span className="btn-ghost p-2" aria-hidden="true">
                   <Pencil size={16} />
-                </button>
-              </div>
+                </span>
+              </button>
             );
           })}
         </div>

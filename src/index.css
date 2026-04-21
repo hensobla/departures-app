@@ -60,8 +60,14 @@ html, body, #root { background: var(--bg); }
 
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; }
 
-.input-text { background: var(--surface); border: 1px solid var(--line); color: var(--ink); font-family: 'IBM Plex Sans', sans-serif; transition: border-color 0.15s; }
+.input-text { background: var(--surface); border: 1px solid var(--line); color: var(--ink); font-family: 'IBM Plex Sans', sans-serif; transition: border-color 0.15s; box-sizing: border-box; max-width: 100%; min-width: 0; }
 .input-text:focus { outline: none; border-color: var(--clay); }
+/* Flatten iOS native chrome on date/time inputs so they respect w-full. */
+.input-text[type="date"], .input-text[type="time"], .input-text[type="datetime-local"] {
+  -webkit-appearance: none;
+  appearance: none;
+  min-height: 3rem;
+}
 
 .pill { background: var(--surface); border: 1px solid var(--line); color: var(--ink); border-radius: 999px; font-family: 'IBM Plex Mono', monospace; font-weight: 500; transition: all 0.15s; }
 .pill:hover { border-color: var(--clay); }
