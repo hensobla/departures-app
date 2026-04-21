@@ -1976,7 +1976,7 @@ function SettingsView({
 /* =====================================================================
    ONBOARDING
    ===================================================================== */
-function Onboarding({ onClose }) {
+function Onboarding({ onClose, goalSeconds, onChangeGoal, askConfirm }) {
   const [step, setStep] = useState(0);
 
   const isStandalone =
@@ -2008,7 +2008,7 @@ function Onboarding({ onClose }) {
       key: 'goal',
       title: 'Pick a duration to build toward.',
       body:
-        "Your goal is how long you ultimately want your dog to be okay alone — an hour is a good starting target. The chart on the History screen shows how you're tracking. Tap the i in the top corner of the home screen anytime to revisit this guide.",
+        "Your goal is how long you ultimately want your dog to be okay alone — an hour is a good starting target. You can change this any time from the History screen. Tap the i in the top corner of the home screen anytime to revisit this guide.",
     },
   ];
 
@@ -2135,20 +2135,11 @@ function Onboarding({ onClose }) {
           )}
           {screen.key === 'goal' && (
             <div className="mt-6">
-              <div className="flex items-baseline justify-between mb-2">
-                <div className="text-xs tracking-widest uppercase flex items-center gap-1.5" style={{ color: 'var(--ink-muted)' }}>
-                  <Target size={11} /> Goal 1h
-                </div>
-                <div className="serif tabular text-sm" style={{ color: 'var(--ink-soft)' }}>
-                  40%
-                </div>
-              </div>
-              <div className="progress-track">
-                <div className="progress-fill" style={{ width: '40%' }} />
-              </div>
-              <div className="serif italic text-sm mt-2" style={{ color: 'var(--ink-soft)' }}>
-                This is the bar you'll see on the home screen.
-              </div>
+              <GoalCard
+                goalSeconds={goalSeconds}
+                onChange={onChangeGoal}
+                askConfirm={askConfirm}
+              />
             </div>
           )}
         </div>
@@ -2494,7 +2485,12 @@ export default function App() {
             <div className="serif italic text-xl" style={{ color: 'var(--ink-muted)' }}>Loading…</div>
           </div>
         ) : view === 'onboarding' ? (
-          <Onboarding onClose={dismissOnboarding} />
+          <Onboarding
+            onClose={dismissOnboarding}
+            goalSeconds={goalSeconds}
+            onChangeGoal={handleChangeGoal}
+            askConfirm={askConfirm}
+          />
         ) : view === 'home' ? (
           <Home
             nextRehearsalSeconds={autoSuggestion.seconds}
