@@ -1972,13 +1972,22 @@ function Onboarding({ onClose }) {
   }
 
   const isLast = step === screens.length - 1;
+  const isFirst = step === 0;
   const screen = screens[step];
   const next = () => (isLast ? onClose() : setStep(step + 1));
+  const back = () => { if (!isFirst) setStep(step - 1); };
 
   return (
     <div className="fade-up flex flex-col flex-1 min-h-0">
       <TopBar
         title=""
+        left={
+          !isFirst ? (
+            <button onClick={back} className="btn-ghost text-sm px-2 py-2" aria-label="Back">
+              Back
+            </button>
+          ) : null
+        }
         right={
           <button onClick={onClose} className="btn-ghost text-sm px-2 py-2" aria-label="Skip onboarding">
             Skip
