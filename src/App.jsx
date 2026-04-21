@@ -1342,9 +1342,9 @@ function GoalCard({ goalSeconds, onChange, askConfirm }) {
    HISTORY
    ===================================================================== */
 const CHART_RANGES = [
-  { id: 'all', label: 'All time',         take: Infinity },
-  { id: '30',  label: 'Past 30 sessions', take: 30 },
-  { id: '7',   label: 'Past 7 sessions',  take: 7 },
+  { id: 'all', label: 'All time', take: Infinity },
+  { id: '30',  label: 'Last 30',  take: 30 },
+  { id: '7',   label: 'Last 7',   take: 7 },
 ];
 
 const KIND_LABEL = {
