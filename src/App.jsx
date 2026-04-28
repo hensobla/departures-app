@@ -393,18 +393,27 @@ function fireSystemNotification(title, body) {
   }
 }
 
-// Unified alerting: chime if the app is visible, system notification otherwise.
-// Falls back to the chime when system notifications aren't available so the
-// user never ends up with no signal at all.
-function firePhaseEndAlert({ notificationsEnabled, volume, title, body }) {
+// Unified alerting. Fires a system notification when the document is hidden
+// now OR was hidden at any point during the just-ended phase (the iOS-PWA
+// case where JS suspends in the background and only catches up to the
+// phase end after the user reopens the app — at that point we still want a
+// real notification, not just a chime they may already have missed). Plays
+// the chime as well whenever the app is currently visible so the user gets
+// an immediate audible cue too. Falls back to the chime if system
+// notifications aren't available.
+function firePhaseEndAlert({ notificationsEnabled, volume, title, body, wasHidden = false }) {
   if (!notificationsEnabled) return;
   const volMult = Math.max(0, Math.min(100, volume)) / 100;
   const isVisible = typeof document !== 'undefined' && document.visibilityState === 'visible';
-  if (isVisible) {
+  const shouldNotify = !isVisible || wasHidden;
+  let notifFired = false;
+  if (shouldNotify) {
+    notifFired = fireSystemNotification(title, body);
+  }
+  // Chime when visible (so the user hears something immediately) or when the
+  // notification couldn't fire (so they always get *some* signal).
+  if (isVisible || !notifFired) {
     playAlarm(volMult);
-  } else {
-    const fired = fireSystemNotification(title, body);
-    if (!fired) playAlarm(volMult);
   }
 }
 
@@ -908,6 +917,27 @@ function SessionView({ session, soundEnabled, toggleSound, volume = 100, onUpdat
   const isLast = session.currentPhaseIndex >= session.phases.length - 1;
   const nextPhase = !isLast ? session.phases[session.currentPhaseIndex + 1] : null;
 
+  // Track whether the document was hidden at any point during the current
+  // running segment, so that when JS resumes after an iOS background-suspend
+  // we can still fire a real system notification rather than just a (now
+  // delayed) chime. Reset whenever a new running segment begins.
+  const phaseWasHiddenRef = useRef(false);
+  useEffect(() => {
+    if (session.phaseState === 'running') {
+      phaseWasHiddenRef.current =
+        typeof document !== 'undefined' && document.visibilityState === 'hidden';
+    }
+  }, [session.phaseState, session.currentPhaseIndex, session.phaseEndTime]);
+  useEffect(() => {
+    const handler = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        phaseWasHiddenRef.current = true;
+      }
+    };
+    document.addEventListener('visibilitychange', handler);
+    return () => document.removeEventListener('visibilitychange', handler);
+  }, []);
+
   const alertPhaseEnd = (completedPhase, upcomingPhase) => {
     const phaseName = completedPhase?.type === 'warmup' ? 'Warm-up'
       : completedPhase?.type === 'rehearsal' ? 'Rehearsal'
@@ -921,6 +951,7 @@ function SessionView({ session, soundEnabled, toggleSound, volume = 100, onUpdat
       volume,
       title: `${phaseName} complete`,
       body,
+      wasHidden: phaseWasHiddenRef.current,
     });
   };
 
@@ -940,7 +971,10 @@ function SessionView({ session, soundEnabled, toggleSound, volume = 100, onUpdat
 
   let remaining;
   if (session.phaseState === 'waiting') remaining = phase.durationSeconds;
-  else if (session.phaseState === 'running') remaining = Math.max(0, (session.phaseEndTime - now) / 1000);
+  // Cap at the phase duration so a stale `now` (e.g. on the first render
+  // after Start, before the setInterval has ticked) can't briefly display a
+  // value larger than the phase length.
+  else if (session.phaseState === 'running') remaining = Math.min(phase.durationSeconds, Math.max(0, (session.phaseEndTime - now) / 1000));
   else if (session.phaseState === 'paused') remaining = session.pausedRemaining;
   else remaining = 0;
 
@@ -951,8 +985,13 @@ function SessionView({ session, soundEnabled, toggleSound, volume = 100, onUpdat
       onUpdate({ ...session, phaseState: 'complete', phaseEndTime: null, pausedRemaining: null });
       return;
     }
+    // Sync `now` to the same instant we set phaseEndTime against, so the
+    // first render after this update shows exactly `dur` (no flash of a
+    // slightly-larger number from a stale `now`).
+    const t = Date.now();
+    setNow(t);
     onUpdate({ ...session, phaseState: 'running',
-               phaseEndTime: Date.now() + dur * 1000, pausedRemaining: null });
+               phaseEndTime: t + dur * 1000, pausedRemaining: null });
   };
 
   const pauseTimer = () => {
