@@ -34,6 +34,10 @@ const SEED_HISTORY = [
 
 const DEFAULT_GOAL_SECONDS = 3600; // 1 hour
 
+// Allowed range for the warm-up count picker on the Setup screen.
+const WARMUP_MIN = 5;
+const WARMUP_MAX = 10;
+
 /* Rating metadata — matches trainer's rating table exactly */
 const RATINGS = [
   { num: 1, label: 'Great', desc: 'No barking',                              color: '#7A8F6F' }, // sage
@@ -91,12 +95,17 @@ function formatDate(iso) {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-function generateWarmUps() {
-  const count = 5 + Math.floor(Math.random() * 3);
+function generateWarmUps(count) {
+  // Default to a small randomized count so the first session feels fresh
+  // each time. Callers (e.g. Shuffle) pass an explicit count to preserve
+  // the user's chosen length.
+  const total = typeof count === 'number'
+    ? Math.max(1, count)
+    : 5 + Math.floor(Math.random() * 3);
   const shortVals = [5, 10, 15, 20];
   const longVals = [25, 30, 35, 40, 45, 50, 55];
   const result = [0];
-  for (let i = 0; i < count - 1; i++) {
+  for (let i = 0; i < total - 1; i++) {
     const pool = Math.random() < 0.4 ? shortVals : longVals;
     result.push(pool[Math.floor(Math.random() * pool.length)]);
   }
@@ -791,8 +800,26 @@ function Setup({ nextNumber, suggestion, onBack, onStart, shakeUpSuggestion }) {
     const v = Math.max(0, Math.min(600, parseInt(newValue, 10) || 0));
     setWarmUps(w => w.map((x, i) => (i === idx ? v : x)));
   };
-  const removeWarmUp = (idx) => setWarmUps(w => w.filter((_, i) => i !== idx));
-  const addWarmUp = () => setWarmUps(w => [...w, 0]);
+  const removeWarmUp = (idx) => setWarmUps(w => (w.length <= WARMUP_MIN ? w : w.filter((_, i) => i !== idx)));
+  const addWarmUp = () => setWarmUps(w => (w.length >= WARMUP_MAX ? w : [...w, 0]));
+
+  // Resize the warm-up list to exactly `n`. Truncates from the tail when
+  // shrinking; appends randomized values when growing.
+  const setWarmUpCount = (n) => {
+    const target = Math.max(WARMUP_MIN, Math.min(WARMUP_MAX, n));
+    setWarmUps(prev => {
+      if (prev.length === target) return prev;
+      if (prev.length > target) return prev.slice(0, target);
+      const shortVals = [5, 10, 15, 20];
+      const longVals = [25, 30, 35, 40, 45, 50, 55];
+      const next = [...prev];
+      while (next.length < target) {
+        const pool = Math.random() < 0.4 ? shortVals : longVals;
+        next.push(pool[Math.floor(Math.random() * pool.length)]);
+      }
+      return next;
+    });
+  };
 
   // Icon + accent color for suggestion kind
   const kindMeta = {
@@ -844,10 +871,20 @@ function Setup({ nextNumber, suggestion, onBack, onStart, shakeUpSuggestion }) {
 
         <div className="mb-8">
           <div className="flex items-center justify-between mb-3">
-            <div className="text-xs tracking-widest uppercase" style={{ color: 'var(--ink-muted)' }}>
-              Warm-ups ({warmUps.length})
-            </div>
-            <button onClick={() => setWarmUps(generateWarmUps())} className="btn-ghost text-xs flex items-center gap-1.5 py-1">
+            <label className="text-xs tracking-widest uppercase flex items-center gap-2" style={{ color: 'var(--ink-muted)' }}>
+              <span>Warm-ups</span>
+              <select
+                value={Math.max(WARMUP_MIN, Math.min(WARMUP_MAX, warmUps.length))}
+                onChange={e => setWarmUpCount(parseInt(e.target.value, 10))}
+                className="input-text tabular text-xs tracking-normal py-1 pl-2 pr-1 rounded-md"
+                aria-label="Number of warm-ups"
+              >
+                {Array.from({ length: WARMUP_MAX - WARMUP_MIN + 1 }, (_, i) => WARMUP_MIN + i).map(n => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </label>
+            <button onClick={() => setWarmUps(generateWarmUps(warmUps.length))} className="btn-ghost text-xs flex items-center gap-1.5 py-1">
               <Shuffle size={14} /> Shuffle
             </button>
           </div>
