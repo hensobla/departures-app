@@ -2078,7 +2078,15 @@ function ProgressionChart({
           })}
         </div>
       )}
-      <div style={{ width: '100%', height }}>
+      <div
+        style={{
+          width: '100%',
+          height,
+          // Allow vertical page scroll to pass through the chart, but let
+          // Recharts capture horizontal touch movement for scrubbing.
+          touchAction: 'pan-y',
+        }}
+      >
         <ResponsiveContainer>
           <LineChart
             data={chartData}
@@ -2105,7 +2113,13 @@ function ProgressionChart({
               unit="m"
               domain={[0, yMax]}
             />
-            <Tooltip content={tooltipContent} />
+            {/* Custom cursor: clay-tinted vertical line so the scrub position
+                reads clearly on the cream surface. Recharts' default is a
+                generic gray that gets lost against the chart grid. */}
+            <Tooltip
+              content={tooltipContent}
+              cursor={{ stroke: '#B8563A', strokeOpacity: 0.45, strokeWidth: 1, strokeDasharray: '3 3' }}
+            />
             <ReferenceLine
               y={goalMinutes}
               stroke="#7A8F6F"
@@ -2131,7 +2145,9 @@ function ProgressionChart({
                 strokeDasharray="2 3"
               />
             )}
-            {/* Projection first so history dots render on top at the bridge. */}
+            {/* Projection first so history dots render on top at the bridge.
+                Active-dot radii bumped on touch surfaces so the scrubbed
+                point is easy to track when a finger covers part of the chart. */}
             <Line
               type="monotone"
               dataKey="projMinutes"
@@ -2140,7 +2156,7 @@ function ProgressionChart({
               strokeWidth={1.5}
               strokeDasharray="4 4"
               dot={renderProjDot}
-              activeDot={{ r: compact ? 5 : 6, fill: '#FBF7EF', stroke: '#B8563A', strokeWidth: 1.5 }}
+              activeDot={{ r: compact ? 7 : 7, fill: '#FBF7EF', stroke: '#B8563A', strokeWidth: 1.75 }}
               isAnimationActive={false}
               connectNulls={false}
             />
@@ -2150,7 +2166,7 @@ function ProgressionChart({
               stroke="#B8563A"
               strokeWidth={1.5}
               dot={renderHistoryDot}
-              activeDot={{ r: compact ? 5 : 6 }}
+              activeDot={{ r: compact ? 7 : 7, strokeWidth: 1.5 }}
               isAnimationActive={false}
               connectNulls={false}
             />
