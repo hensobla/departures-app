@@ -919,15 +919,21 @@ function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSecon
           </div>
         </div>
 
-        {/* Trajectory card: chart + goal + estimate, anchored together */}
+        {/* Trajectory card: chart + goal + estimate, anchored together. Whole
+            card is a button to History when there's history to view. */}
         {hasHistory ? (
-          <div className="card p-4 mb-4">
-            <div className="flex items-baseline justify-between mb-2">
+          <button
+            type="button"
+            onClick={onHistory}
+            aria-label="View history"
+            className="card p-4 mb-4 w-full text-left transition-colors hover:border-[color:var(--ink-muted)]"
+          >
+            <div className="flex items-center justify-between mb-2">
               <div className="text-xs tracking-widest uppercase" style={{ color: 'var(--ink-muted)' }}>
                 Trajectory
               </div>
-              <div className="serif tabular text-sm" style={{ color: 'var(--ink-soft)' }}>
-                {goalProgress.percent}%
+              <div className="text-xs" style={{ color: 'var(--ink-soft)' }}>
+                View history →
               </div>
             </div>
             <ProgressionChart
@@ -943,14 +949,19 @@ function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSecon
                 <Target size={11} />
                 <span className="tracking-widest uppercase">Goal {formatTimeLong(goalSeconds)}</span>
               </div>
-              <div className="progress-track mb-2">
-                <div className="progress-fill" style={{ width: `${goalProgress.percent}%` }} />
+              <div className="flex items-center gap-2 mb-2">
+                <div className="progress-track flex-1">
+                  <div className="progress-fill" style={{ width: `${goalProgress.percent}%` }} />
+                </div>
+                <div className="serif tabular text-xs" style={{ color: 'var(--ink-soft)', minWidth: 32, textAlign: 'right' }}>
+                  {goalProgress.percent}%
+                </div>
               </div>
               <div className="serif italic text-sm" style={{ color: 'var(--ink-soft)' }}>
                 {estimateText(goalProgress)}
               </div>
             </div>
-          </div>
+          </button>
         ) : (
           /* No history yet: goal card stands alone */
           <div className="card p-4 mb-4">
@@ -958,8 +969,13 @@ function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSecon
               <Target size={11} />
               <span className="tracking-widest uppercase">Goal {formatTimeLong(goalSeconds)}</span>
             </div>
-            <div className="progress-track mb-2">
-              <div className="progress-fill" style={{ width: `${goalProgress.percent}%` }} />
+            <div className="flex items-center gap-2 mb-2">
+              <div className="progress-track flex-1">
+                <div className="progress-fill" style={{ width: `${goalProgress.percent}%` }} />
+              </div>
+              <div className="serif tabular text-xs" style={{ color: 'var(--ink-soft)', minWidth: 32, textAlign: 'right' }}>
+                {goalProgress.percent}%
+              </div>
             </div>
             <div className="serif italic text-sm" style={{ color: 'var(--ink-soft)' }}>
               {estimateText(goalProgress)}
@@ -987,13 +1003,10 @@ function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSecon
           </div>
         )}
 
-        {/* Buttons pinned to bottom via mt-auto */}
+        {/* Start button pinned to bottom via mt-auto */}
         <div className="mt-auto shrink-0 pb-6 pt-4">
-          <button onClick={onStart} className="btn-primary w-full py-5 rounded-full text-lg mb-2">
+          <button onClick={onStart} className="btn-primary w-full py-5 rounded-full text-lg">
             Start session
-          </button>
-          <button onClick={onHistory} className="btn-ghost py-2 text-sm w-full">
-            View history →
           </button>
         </div>
       </div>
