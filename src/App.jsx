@@ -722,9 +722,12 @@ function LastSevenDaysStrip({ history, onOpenCalendar }) {
           <CalendarIcon size={11} />
           <span>Last 7 days</span>
         </div>
-        <div className="text-xs" style={{ color: 'var(--ink-soft)' }}>
+        {/* Visually a pill to match the Trajectory tile's View-history button.
+            Rendered as a span (not a nested button) so the whole tile keeps a
+            single click target. */}
+        <span className="btn-secondary text-xs px-2.5 py-1 rounded-full" aria-hidden="true">
           View calendar →
-        </div>
+        </span>
       </div>
       <div className="grid grid-cols-7 gap-1">
         {days.map((d) => {
@@ -1691,9 +1694,10 @@ function GoalCard({ goalSeconds, onChange, askConfirm }) {
    HISTORY
    ===================================================================== */
 const CHART_RANGES = [
-  { id: 'all', label: 'All time', take: Infinity },
-  { id: '30',  label: 'Last 30',  take: 30 },
-  { id: '7',   label: 'Last 7',   take: 7 },
+  { id: 'all',    label: 'All time', take: Infinity, projectN: 0 },
+  { id: '30',     label: 'Last 30',  take: 30,       projectN: 0 },
+  { id: '7',      label: 'Last 7',   take: 7,        projectN: 0 },
+  { id: 'next10', label: 'Next 10',  take: 3,        projectN: 10 },
 ];
 
 const KIND_LABEL = {
@@ -1721,21 +1725,32 @@ const KIND_LABEL = {
 function ProgressionChart({
   history,
   goalSeconds,
-  projection = [],
+  projection: projectionProp = [],
   compact = false,
   height = 200,
   historyTake = 3,
   showTitle = true,
+  growthIntensity = 'typical',
 }) {
   const [chartRange, setChartRange] = useState('all');
 
   const ascending = [...history].sort((a, b) => a.number - b.number);
   let sliced;
+  let projection;
   if (compact) {
     sliced = ascending.slice(-historyTake);
+    projection = projectionProp;
   } else {
-    const take = CHART_RANGES.find(r => r.id === chartRange)?.take ?? Infinity;
+    const range = CHART_RANGES.find(r => r.id === chartRange);
+    const take = range?.take ?? Infinity;
     sliced = take === Infinity ? ascending : ascending.slice(-take);
+    // For ranges that opt in to a forward projection (e.g. "Next 10"),
+    // simulate the next N sessions inline using the same growth model the
+    // Home tile uses. simulateProjection caps at the goal so projection
+    // never overshoots.
+    projection = range?.projectN
+      ? simulateProjection(history, goalSeconds, range.projectN, { growthIntensity })
+      : [];
   }
 
   const historyRows = sliced.map(s => ({
@@ -1983,7 +1998,8 @@ function ProgressionChart({
   );
 }
 
-function HistoryView({ history, goalSeconds, onChangeGoal, askConfirm,
+function HistoryView({ history, goalSeconds, growthIntensity = 'typical',
+                       onChangeGoal, askConfirm,
                        onBack, onEdit, onAdd, onExport, onImport }) {
   const fileInputRef = useRef(null);
   const sorted = [...history].sort((a, b) => b.number - a.number);
@@ -1999,7 +2015,11 @@ function HistoryView({ history, goalSeconds, onChangeGoal, askConfirm,
         <GoalCard goalSeconds={goalSeconds} onChange={onChangeGoal} askConfirm={askConfirm} />
 
         {history.length > 0 && (
-          <ProgressionChart history={history} goalSeconds={goalSeconds} />
+          <ProgressionChart
+            history={history}
+            goalSeconds={goalSeconds}
+            growthIntensity={growthIntensity}
+          />
         )}
 
         <div className="flex items-center justify-between mb-2 px-1">
@@ -2867,6 +2887,7 @@ export default function App() {
           <HistoryView
             history={history}
             goalSeconds={goalSeconds}
+            growthIntensity={growthIntensity}
             onChangeGoal={handleChangeGoal}
             askConfirm={askConfirm}
             onBack={() => setView('home')}
