@@ -733,14 +733,11 @@ function LastSevenDaysStrip({ history, onOpenCalendar }) {
           const isToday = iso === todayIso;
           const labelColor = isToday ? 'var(--clay)' : 'var(--ink-muted)';
           return (
-            <div key={iso} className="flex flex-col items-center gap-1 py-1">
+            <div key={iso} className="flex flex-col items-center gap-1.5 py-1">
               <div className="text-xs" style={{ color: labelColor, fontWeight: isToday ? 500 : 400 }}>
                 {DAY_ABBREVS_3[d.getDay()]}
               </div>
-              <div className="serif tabular text-sm" style={{ color: isToday ? 'var(--clay)' : 'var(--ink-soft)', fontWeight: isToday ? 500 : 400 }}>
-                {d.getDate()}
-              </div>
-              <CheckDot done={completed} size={18} />
+              <CheckDot done={completed} size={20} />
             </div>
           );
         })}
@@ -2638,7 +2635,9 @@ export default function App() {
   };
 
   const handleSaveToHistory = ({ rating, notes }) => {
-    const today = new Date().toISOString().slice(0, 10);
+    // Local YYYY-MM-DD — toISOString() would shift west-of-UTC users into
+    // the next day during evenings, breaking the calendar "today" lookup.
+    const today = ymdLocal(new Date());
     const record = {
       number: activeSession.number,
       date: today,
@@ -2729,7 +2728,7 @@ export default function App() {
   const handleAddSessionFromHistory = () => {
     const blank = {
       number: nextNumber,
-      date: new Date().toISOString().slice(0, 10), // YYYY-MM-DD
+      date: ymdLocal(new Date()), // local YYYY-MM-DD; not UTC
       rehearsalSeconds: 60,
       warmUps: [],
       notes: '',
