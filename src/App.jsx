@@ -5,7 +5,7 @@ import {
   ChevronLeft, RotateCcw, Check, Download, Upload, Clock, ChevronRight,
   Pencil, Trash2, Plus, Target, TrendingUp, TrendingDown, Info,
   DoorOpen, Heart, Share, MoreVertical, Settings as SettingsIcon,
-  Bell, BellOff, Gauge
+  Bell, BellOff, Gauge, Calendar as CalendarIcon
 } from 'lucide-react';
 
 /* =====================================================================
@@ -93,6 +93,26 @@ function formatDate(iso) {
   if (!iso) return '—';
   const d = new Date(iso + 'T00:00:00');
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+// Local-date YYYY-MM-DD (matches how history.date is stored, which is the
+// browser's local day, not UTC). Using toISOString here would shift across
+// midnight in any timezone west of UTC.
+function ymdLocal(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+// Set of YYYY-MM-DD strings for any day with at least one session.
+function buildSessionDaySet(history) {
+  const set = new Set();
+  if (!history) return set;
+  for (const s of history) {
+    if (s.date) set.add(s.date);
+  }
+  return set;
 }
 
 function generateWarmUps(count) {
@@ -647,6 +667,202 @@ function TopBar({ left, right, title }) {
 }
 
 /* =====================================================================
+   CALENDAR — last-7-days strip + full-month view
+   ===================================================================== */
+const DAY_ABBREVS_3 = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const DAY_ABBREVS_1 = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
+function CheckDot({ done, size = 16 }) {
+  if (done) {
+    return (
+      <div
+        style={{
+          width: size, height: size, borderRadius: 999,
+          background: 'var(--sage)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}
+      >
+        <Check size={Math.round(size * 0.65)} strokeWidth={3} style={{ color: '#FBF7EF' }} />
+      </div>
+    );
+  }
+  return (
+    <div
+      style={{
+        width: size, height: size, borderRadius: 999,
+        border: '1px dashed var(--line)',
+      }}
+    />
+  );
+}
+
+function LastSevenDaysStrip({ history, onOpenCalendar }) {
+  const sessionDays = buildSessionDaySet(history);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayIso = ymdLocal(today);
+
+  // Oldest → today (left → right). Rightmost cell is always "today".
+  const days = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    days.push(d);
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onOpenCalendar}
+      className="card p-3 mb-4 w-full text-left transition-colors hover:border-[color:var(--ink-muted)]"
+      aria-label="Open full calendar"
+    >
+      <div className="flex items-center justify-between mb-2 px-1">
+        <div className="text-xs tracking-widest uppercase flex items-center gap-1.5" style={{ color: 'var(--ink-muted)' }}>
+          <CalendarIcon size={11} />
+          <span>Last 7 days</span>
+        </div>
+        <div className="text-xs" style={{ color: 'var(--ink-soft)' }}>
+          View calendar →
+        </div>
+      </div>
+      <div className="grid grid-cols-7 gap-1">
+        {days.map((d) => {
+          const iso = ymdLocal(d);
+          const completed = sessionDays.has(iso);
+          const isToday = iso === todayIso;
+          const labelColor = isToday ? 'var(--clay)' : 'var(--ink-muted)';
+          return (
+            <div key={iso} className="flex flex-col items-center gap-1.5 py-1">
+              <div className="text-xs" style={{ color: labelColor, fontWeight: isToday ? 500 : 400 }}>
+                {DAY_ABBREVS_3[d.getDay()]}
+              </div>
+              <CheckDot done={completed} size={20} />
+            </div>
+          );
+        })}
+      </div>
+    </button>
+  );
+}
+
+function CalendarView({ history, onBack }) {
+  const sessionDays = buildSessionDaySet(history);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayIso = ymdLocal(today);
+
+  // `cursor` is the first-of-month for the month currently displayed.
+  const [cursor, setCursor] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1));
+  const cursorYear = cursor.getFullYear();
+  const cursorMonth = cursor.getMonth();
+  const monthName = cursor.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+
+  const firstDay = new Date(cursorYear, cursorMonth, 1);
+  const lastDay = new Date(cursorYear, cursorMonth + 1, 0);
+  const startWeekday = firstDay.getDay(); // 0 (Sun) .. 6 (Sat)
+  const numDays = lastDay.getDate();
+
+  // Build flat array of cells: leading nulls for previous-month padding,
+  // then the days, then trailing nulls so the grid is a full multiple of 7.
+  const cells = [];
+  for (let i = 0; i < startWeekday; i++) cells.push(null);
+  for (let d = 1; d <= numDays; d++) cells.push(new Date(cursorYear, cursorMonth, d));
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  const goPrev = () => setCursor(new Date(cursorYear, cursorMonth - 1, 1));
+  const goNext = () => setCursor(new Date(cursorYear, cursorMonth + 1, 1));
+  // Don't let the user page into the future further than the current month.
+  const isCurrentOrFutureMonth =
+    cursorYear > today.getFullYear() ||
+    (cursorYear === today.getFullYear() && cursorMonth >= today.getMonth());
+
+  // Count completed days in this month to show as a small footer stat.
+  let monthCompletedCount = 0;
+  for (let d = 1; d <= numDays; d++) {
+    if (sessionDays.has(ymdLocal(new Date(cursorYear, cursorMonth, d)))) monthCompletedCount++;
+  }
+
+  return (
+    <div className="fade-up flex flex-col flex-1 min-h-0">
+      <TopBar
+        title="CALENDAR"
+        left={<button onClick={onBack} className="btn-ghost p-2" aria-label="Back"><ChevronLeft size={22} /></button>}
+      />
+      <div className="flex-1 min-h-0 px-5 pb-6 overflow-y-auto scrollbar-thin">
+        <div className="card p-4 mb-3">
+          <div className="flex items-center justify-between mb-3">
+            <button onClick={goPrev} className="btn-ghost p-2" aria-label="Previous month">
+              <ChevronLeft size={20} />
+            </button>
+            <div className="serif text-lg" style={{ fontWeight: 500 }}>{monthName}</div>
+            <button
+              onClick={goNext}
+              className="btn-ghost p-2"
+              aria-label="Next month"
+              disabled={isCurrentOrFutureMonth}
+              style={{ opacity: isCurrentOrFutureMonth ? 0.3 : 1 }}
+            >
+              <ChevronRight size={20} />
+            </button>
+          </div>
+
+          {/* Day-of-week header */}
+          <div className="grid grid-cols-7 gap-1 mb-1">
+            {DAY_ABBREVS_1.map((l, i) => (
+              <div
+                key={i}
+                className="text-center text-xs tracking-wider uppercase py-1"
+                style={{ color: 'var(--ink-muted)' }}
+              >
+                {l}
+              </div>
+            ))}
+          </div>
+
+          {/* Date grid */}
+          <div className="grid grid-cols-7 gap-1">
+            {cells.map((d, i) => {
+              if (!d) return <div key={`pad-${i}`} />;
+              const iso = ymdLocal(d);
+              const completed = sessionDays.has(iso);
+              const isToday = iso === todayIso;
+              const isFuture = d.getTime() > today.getTime();
+              return (
+                <div
+                  key={iso}
+                  className="flex flex-col items-center gap-1 py-1.5 rounded-lg"
+                  style={{
+                    background: isToday ? 'rgba(184, 86, 58, 0.08)' : 'transparent',
+                    border: isToday ? '1px solid var(--clay)' : '1px solid transparent',
+                    opacity: isFuture && !isToday ? 0.45 : 1,
+                  }}
+                >
+                  <div
+                    className="serif tabular text-sm"
+                    style={{
+                      color: isToday ? 'var(--clay)' : 'var(--ink)',
+                      fontWeight: isToday ? 500 : 400,
+                    }}
+                  >
+                    {d.getDate()}
+                  </div>
+                  <CheckDot done={completed} size={14} />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="text-xs px-2" style={{ color: 'var(--ink-muted)' }}>
+          {monthCompletedCount} day{monthCompletedCount === 1 ? '' : 's'} with a session this month.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* =====================================================================
    HOME
    ===================================================================== */
 const HOME_KIND_META = {
@@ -658,7 +874,7 @@ const HOME_KIND_META = {
 };
 
 function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSeconds, goalProgress,
-                onStart, onHistory, onShowOnboarding, onSettings, growthIntensity = 'typical',
+                onStart, onHistory, onShowOnboarding, onSettings, onCalendar, growthIntensity = 'typical',
                 resumable, onResume, onDiscardActive }) {
   const hasHistory = history && history.length > 0;
   const projection = hasHistory ? simulateProjection(history, goalSeconds, 5, { growthIntensity }) : [];
@@ -703,16 +919,24 @@ function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSecon
           </div>
         </div>
 
-        {/* Trajectory card: chart + goal + estimate, anchored together */}
+        {/* Trajectory card: chart + goal + estimate, anchored together. The
+            chart area is reserved for the future scrub gesture, so the
+            "View history" affordance is a discrete pill button in the
+            top-right rather than a whole-card click. */}
         {hasHistory ? (
           <div className="card p-4 mb-4">
-            <div className="flex items-baseline justify-between mb-2">
+            <div className="flex items-center justify-between mb-2">
               <div className="text-xs tracking-widest uppercase" style={{ color: 'var(--ink-muted)' }}>
                 Trajectory
               </div>
-              <div className="serif tabular text-sm" style={{ color: 'var(--ink-soft)' }}>
-                {goalProgress.percent}%
-              </div>
+              <button
+                type="button"
+                onClick={onHistory}
+                aria-label="View history"
+                className="btn-secondary text-xs px-2.5 py-1 rounded-full"
+              >
+                View history →
+              </button>
             </div>
             <ProgressionChart
               history={history}
@@ -727,8 +951,13 @@ function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSecon
                 <Target size={11} />
                 <span className="tracking-widest uppercase">Goal {formatTimeLong(goalSeconds)}</span>
               </div>
-              <div className="progress-track mb-2">
-                <div className="progress-fill" style={{ width: `${goalProgress.percent}%` }} />
+              <div className="flex items-center gap-2 mb-2">
+                <div className="progress-track flex-1">
+                  <div className="progress-fill" style={{ width: `${goalProgress.percent}%` }} />
+                </div>
+                <div className="serif tabular text-xs" style={{ color: 'var(--ink-soft)', minWidth: 32, textAlign: 'right' }}>
+                  {goalProgress.percent}%
+                </div>
               </div>
               <div className="serif italic text-sm" style={{ color: 'var(--ink-soft)' }}>
                 {estimateText(goalProgress)}
@@ -742,14 +971,21 @@ function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSecon
               <Target size={11} />
               <span className="tracking-widest uppercase">Goal {formatTimeLong(goalSeconds)}</span>
             </div>
-            <div className="progress-track mb-2">
-              <div className="progress-fill" style={{ width: `${goalProgress.percent}%` }} />
+            <div className="flex items-center gap-2 mb-2">
+              <div className="progress-track flex-1">
+                <div className="progress-fill" style={{ width: `${goalProgress.percent}%` }} />
+              </div>
+              <div className="serif tabular text-xs" style={{ color: 'var(--ink-soft)', minWidth: 32, textAlign: 'right' }}>
+                {goalProgress.percent}%
+              </div>
             </div>
             <div className="serif italic text-sm" style={{ color: 'var(--ink-soft)' }}>
               {estimateText(goalProgress)}
             </div>
           </div>
         )}
+
+        <LastSevenDaysStrip history={history} onOpenCalendar={onCalendar} />
 
         {resumable && (
           <div className="card p-4 mb-4" style={{ borderColor: 'var(--amber)', background: '#FDF6EA' }}>
@@ -769,13 +1005,10 @@ function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSecon
           </div>
         )}
 
-        {/* Buttons pinned to bottom via mt-auto */}
+        {/* Start button pinned to bottom via mt-auto */}
         <div className="mt-auto shrink-0 pb-6 pt-4">
-          <button onClick={onStart} className="btn-primary w-full py-5 rounded-full text-lg mb-2">
+          <button onClick={onStart} className="btn-primary w-full py-5 rounded-full text-lg">
             Start session
-          </button>
-          <button onClick={onHistory} className="btn-ghost py-2 text-sm w-full">
-            View history →
           </button>
         </div>
       </div>
@@ -2417,7 +2650,9 @@ export default function App() {
   };
 
   const handleSaveToHistory = ({ rating, notes }) => {
-    const today = new Date().toISOString().slice(0, 10);
+    // Local YYYY-MM-DD — toISOString() would shift west-of-UTC users into
+    // the next day during evenings, breaking the calendar "today" lookup.
+    const today = ymdLocal(new Date());
     const record = {
       number: activeSession.number,
       date: today,
@@ -2508,7 +2743,7 @@ export default function App() {
   const handleAddSessionFromHistory = () => {
     const blank = {
       number: nextNumber,
-      date: new Date().toISOString().slice(0, 10), // YYYY-MM-DD
+      date: ymdLocal(new Date()), // local YYYY-MM-DD; not UTC
       rehearsalSeconds: 60,
       warmUps: [],
       notes: '',
@@ -2579,6 +2814,7 @@ export default function App() {
             onHistory={() => setView('history')}
             onShowOnboarding={showOnboarding}
             onSettings={() => setView('settings')}
+            onCalendar={() => setView('calendar')}
             growthIntensity={growthIntensity}
             resumable={activeSession}
             onResume={handleResume}
@@ -2621,6 +2857,11 @@ export default function App() {
             session={activeSession}
             onSave={handleSaveToHistory}
             onDiscard={handleDiscardSession}
+          />
+        ) : view === 'calendar' ? (
+          <CalendarView
+            history={history}
+            onBack={() => setView('home')}
           />
         ) : view === 'history' ? (
           <HistoryView
