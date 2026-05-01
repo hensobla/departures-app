@@ -380,14 +380,50 @@ function estimateText({ trend, estimate }) {
   return '';
 }
 
-/* ---- storage (localStorage) ---- */
+/* ---- storage (localStorage) ----
+ * Reads are tolerant: corrupt JSON or missing keys return null.
+ * Writes that fail (quota, security policy, etc.) dispatch a
+ * 'app-storage-error' window event so the App can surface a toast — the
+ * old behavior was to swallow the error, which let users keep working
+ * thinking their state was saved when it wasn't.
+ */
 function storageGet(key) {
   try { const r = localStorage.getItem(key); return r ? JSON.parse(r) : null; }
   catch { return null; }
 }
 function storageSet(key, value) {
-  try { localStorage.setItem(key, JSON.stringify(value)); }
-  catch (e) { console.error('storage.set failed', key, e); }
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch (e) {
+    console.error('storage.set failed', key, e);
+    try {
+      window.dispatchEvent(new CustomEvent('app-storage-error', { detail: { key, error: String(e) } }));
+    } catch {}
+    return false;
+  }
+}
+// Critical-data variant: copies the previous value to `${key}.backup` first,
+// so a buggy update or a bad write can be rolled back from the prior known
+// good value. Use for history; settings/active are non-critical and can use
+// plain storageSet.
+function storageSetWithBackup(key, value) {
+  try {
+    const prev = localStorage.getItem(key);
+    if (prev != null) {
+      // If this fails (quota), surface the error and abort — we don't want
+      // to write the new value while losing the recovery target.
+      localStorage.setItem(`${key}.backup`, prev);
+    }
+    localStorage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch (e) {
+    console.error('storage.setWithBackup failed', key, e);
+    try {
+      window.dispatchEvent(new CustomEvent('app-storage-error', { detail: { key, error: String(e) } }));
+    } catch {}
+    return false;
+  }
 }
 function storageDelete(key) {
   try { localStorage.removeItem(key); } catch {}
@@ -2652,6 +2688,15 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState(null);
+  // Surfaces storageSet failures (quota / security / private mode etc.).
+  // Without this banner the user could keep working under the impression
+  // their last change had persisted when in reality the write was dropped.
+  const [storageError, setStorageError] = useState(null);
+  useEffect(() => {
+    const handler = (e) => setStorageError(e?.detail || { key: 'unknown' });
+    window.addEventListener('app-storage-error', handler);
+    return () => window.removeEventListener('app-storage-error', handler);
+  }, []);
 
   const askConfirm = useCallback((opts) => {
     return new Promise(resolve => {
@@ -2664,10 +2709,29 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    // Seed-data policy:
+    //   - Truly new device (no `hasInitialized` flag, no history) → seed.
+    //   - Existing user upgrading (no flag, but real history present)
+    //     → don't reseed; just set the flag so we never seed-overwrite.
+    //   - Anyone who has seen the flag already → trust whatever's in
+    //     storage, even if empty (means they've intentionally cleared
+    //     history); never reseed under their feet.
+    const hasInitialized = !!storageGet('hasInitialized');
     let hist = storageGet('history');
-    if (!hist || !Array.isArray(hist) || hist.length === 0) {
-      hist = SEED_HISTORY;
-      storageSet('history', hist);
+    if (!hasInitialized) {
+      if (Array.isArray(hist) && hist.length > 0) {
+        // Existing user — migrate. Keep their data.
+        storageSet('hasInitialized', true);
+      } else {
+        // First run on this device.
+        hist = SEED_HISTORY;
+        storageSetWithBackup('history', hist);
+        storageSet('hasInitialized', true);
+      }
+    } else if (!Array.isArray(hist)) {
+      // Initialized before but `history` is missing/corrupt. Don't seed —
+      // present an empty list and let the user recover via Import.
+      hist = [];
     }
     setHistory(hist);
 
@@ -2830,7 +2894,7 @@ export default function App() {
     };
     const newHistory = [...history, record];
     setHistory(newHistory);
-    storageSet('history', newHistory);
+    storageSetWithBackup('history', newHistory);
     storageDelete('active');
     setActiveSession(null);
     setView('home');
@@ -2892,7 +2956,7 @@ export default function App() {
       });
       if (!ok) return;
       setHistory(imported);
-      storageSet('history', imported);
+      storageSetWithBackup('history', imported);
       if (importedGoal && importedGoal > 0) setGoalSeconds(importedGoal);
     } catch (e) {
       askConfirm({
@@ -2938,7 +3002,7 @@ export default function App() {
       newHistory.sort((a, b) => a.number - b.number);
     }
     setHistory(newHistory);
-    storageSet('history', newHistory);
+    storageSetWithBackup('history', newHistory);
     setEditTarget(null);
     setView('history');
   };
@@ -2946,7 +3010,7 @@ export default function App() {
   const handleDeleteEdit = () => {
     const newHistory = history.filter((_, i) => i !== editTarget.index);
     setHistory(newHistory);
-    storageSet('history', newHistory);
+    storageSetWithBackup('history', newHistory);
     setEditTarget(null);
     setView('history');
   };
@@ -2957,6 +3021,25 @@ export default function App() {
 
   return (
     <div className="app-root">
+      {storageError && (
+        <div
+          role="alert"
+          className="px-5 py-2 text-xs flex items-center gap-2"
+          style={{ background: 'var(--clay)', color: '#FBF7EF' }}
+        >
+          <span className="flex-1 leading-snug">
+            Couldn't save to this device. Your last change may not persist — export your data from History to be safe.
+          </span>
+          <button
+            onClick={() => setStorageError(null)}
+            className="btn-ghost text-xs underline"
+            style={{ color: '#FBF7EF' }}
+            aria-label="Dismiss storage error"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
       <div className="max-w-md mx-auto w-full flex-1 flex flex-col min-h-0">
         {!loaded ? (
           <div className="flex-1 flex items-center justify-center">
