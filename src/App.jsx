@@ -537,6 +537,95 @@ function buildChimeWav(volume) {
   return buf;
 }
 
+/* Build a long, near-silent looping WAV used to keep the JS engine alive on
+ * iOS when the PWA is backgrounded. iOS suspends backgrounded PWAs almost
+ * immediately, but apps that are actively playing audio get extended
+ * background runtime. The signal is a 30 Hz sine at ~0.025% amplitude —
+ * below speaker reproduction and human hearing thresholds, but non-zero so
+ * iOS classifies the session as "playback" rather than "ambient". */
+function buildKeepaliveWav() {
+  const sampleRate = 22050;
+  const dur = 30; // 30s loop — fewer loop boundaries = fewer chances of glitching
+  const n = Math.floor(sampleRate * dur);
+  const headerSize = 44;
+  const buf = new ArrayBuffer(headerSize + n * 2);
+  const view = new DataView(buf);
+
+  const writeStr = (offset, s) => {
+    for (let i = 0; i < s.length; i++) view.setUint8(offset + i, s.charCodeAt(i));
+  };
+
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + n * 2, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeStr(36, 'data');
+  view.setUint32(40, n * 2, true);
+
+  for (let i = 0; i < n; i++) {
+    const sample = Math.round(Math.sin(2 * Math.PI * 30 * i / sampleRate) * 8);
+    view.setInt16(headerSize + i * 2, sample, true);
+  }
+  return buf;
+}
+
+/* Plays a near-silent looping audio clip while `active` is true, so iOS
+ * keeps the PWA's JS alive in the background and our phase-end timers
+ * can still fire while the user is in another app. */
+function useAudioKeepalive(active) {
+  const stateRef = useRef(null);
+
+  // Lazy-init the audio element + blob URL on first activation.
+  const ensureAudio = () => {
+    if (stateRef.current) return stateRef.current;
+    const buf = buildKeepaliveWav();
+    const blob = new Blob([buf], { type: 'audio/wav' });
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio();
+    audio.src = url;
+    audio.loop = true;
+    audio.preload = 'auto';
+    audio.playsInline = true;
+    audio.setAttribute('playsinline', '');
+    audio.setAttribute('webkit-playsinline', '');
+    audio.volume = 0.5;
+    stateRef.current = { audio, url };
+    return stateRef.current;
+  };
+
+  useEffect(() => {
+    if (!active) return;
+    const { audio } = ensureAudio();
+    const p = audio.play();
+    if (p && typeof p.catch === 'function') {
+      p.catch((e) => console.warn('keepalive play failed:', e));
+    }
+    return () => {
+      if (stateRef.current) {
+        try { stateRef.current.audio.pause(); } catch {}
+      }
+    };
+  }, [active]);
+
+  // Free the blob URL on unmount. (The element itself can be GC'd.)
+  useEffect(() => {
+    return () => {
+      if (stateRef.current) {
+        try { stateRef.current.audio.pause(); } catch {}
+        try { URL.revokeObjectURL(stateRef.current.url); } catch {}
+        stateRef.current = null;
+      }
+    };
+  }, []);
+}
+
 function useWakeLock(active) {
   const lockRef = useRef(null);
   useEffect(() => {
@@ -1219,6 +1308,11 @@ function Setup({ nextNumber, suggestion, onBack, onStart, shakeUpSuggestion }) {
 function SessionView({ session, soundEnabled, toggleSound, volume = 100, onUpdate, onAbort, onComplete, askConfirm }) {
   const [now, setNow] = useState(Date.now());
   useWakeLock(session.phaseState === 'running');
+  // Keep JS alive while a phase is running so phase-end notifications can
+  // still fire when the user has switched to another app on iOS. Gated on
+  // soundEnabled (the master notifications toggle) so users who don't want
+  // alerts don't pay the (small) battery cost.
+  useAudioKeepalive(session.phaseState === 'running' && soundEnabled);
 
   const phase = session.phases[session.currentPhaseIndex];
   const isLast = session.currentPhaseIndex >= session.phases.length - 1;
