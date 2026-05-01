@@ -1881,8 +1881,11 @@ function ProgressionChart({
               <button
                 key={t.id}
                 onClick={() => setChartRange(t.id)}
-                className="flex-1 text-xs px-2 py-1.5 rounded-full transition-all"
+                className="flex-1 px-1.5 py-1.5 rounded-full transition-all whitespace-nowrap"
                 style={{
+                  // Fluid font size so all four tabs fit on narrow phones.
+                  // Clamps to 10px at the smallest, 12px (text-xs) at normal widths.
+                  fontSize: 'clamp(10px, 2.7vw, 12px)',
                   background: active ? 'var(--surface)' : 'transparent',
                   color: active ? 'var(--ink)' : 'var(--ink-muted)',
                   fontWeight: active ? 500 : 400,
