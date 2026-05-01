@@ -780,6 +780,35 @@ function CalendarView({ history, onBack }) {
     cursorYear > today.getFullYear() ||
     (cursorYear === today.getFullYear() && cursorMonth >= today.getMonth());
 
+  // Horizontal swipe to change month. Threshold + horizontal-dominance check
+  // so vertical page scrolls and chevron taps both still work normally.
+  const swipeStart = useRef(null);
+  const onTouchStart = (e) => {
+    if (e.touches.length !== 1) { swipeStart.current = null; return; }
+    const t = e.touches[0];
+    swipeStart.current = { x: t.clientX, y: t.clientY };
+  };
+  const onTouchEnd = (e) => {
+    const start = swipeStart.current;
+    swipeStart.current = null;
+    if (!start) return;
+    const t = e.changedTouches[0];
+    if (!t) return;
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    const SWIPE_DISTANCE = 60;        // min horizontal travel
+    const HORIZONTAL_DOMINANCE = 1.5; // |dx| must beat |dy| by this factor
+    if (Math.abs(dx) < SWIPE_DISTANCE) return;
+    if (Math.abs(dx) < Math.abs(dy) * HORIZONTAL_DOMINANCE) return;
+    if (dx < 0) {
+      // swipe left → next month
+      if (!isCurrentOrFutureMonth) goNext();
+    } else {
+      // swipe right → previous month
+      goPrev();
+    }
+  };
+
   // Count completed days in this month to show as a small footer stat.
   let monthCompletedCount = 0;
   for (let d = 1; d <= numDays; d++) {
@@ -793,7 +822,12 @@ function CalendarView({ history, onBack }) {
         left={<button onClick={onBack} className="btn-ghost p-2" aria-label="Back"><ChevronLeft size={22} /></button>}
       />
       <div className="flex-1 min-h-0 px-5 pb-6 overflow-y-auto scrollbar-thin">
-        <div className="card p-4 mb-3">
+        <div
+          className="card p-4 mb-3"
+          onTouchStart={onTouchStart}
+          onTouchEnd={onTouchEnd}
+          style={{ touchAction: 'pan-y' }}
+        >
           <div className="flex items-center justify-between mb-3">
             <button onClick={goPrev} className="btn-ghost p-2" aria-label="Previous month">
               <ChevronLeft size={20} />
