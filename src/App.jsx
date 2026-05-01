@@ -748,9 +748,11 @@ function ConfirmDialog({ dialog }) {
 function TopBar({ left, right, title }) {
   return (
     <div className="flex items-center justify-between px-5 pt-5 pb-2">
-      <div className="w-10 h-10 flex items-center justify-start">{left}</div>
+      {/* min-w-10 keeps the slots at 40px when they hold an icon button but
+          lets them grow to fit a pill (e.g. CalendarView's Today button). */}
+      <div className="min-w-10 h-10 flex items-center justify-start">{left}</div>
       <div className="serif text-sm tracking-wide" style={{ color: 'var(--ink-muted)' }}>{title}</div>
-      <div className="w-10 h-10 flex items-center justify-end">{right}</div>
+      <div className="min-w-10 h-10 flex items-center justify-end">{right}</div>
     </div>
   );
 }
@@ -864,10 +866,13 @@ function CalendarView({ history, onBack }) {
 
   const goPrev = () => setCursor(new Date(cursorYear, cursorMonth - 1, 1));
   const goNext = () => setCursor(new Date(cursorYear, cursorMonth + 1, 1));
+  const goToday = () => setCursor(new Date(today.getFullYear(), today.getMonth(), 1));
   // Don't let the user page into the future further than the current month.
   const isCurrentOrFutureMonth =
     cursorYear > today.getFullYear() ||
     (cursorYear === today.getFullYear() && cursorMonth >= today.getMonth());
+  const isCurrentMonth =
+    cursorYear === today.getFullYear() && cursorMonth === today.getMonth();
 
   // Horizontal swipe to change month. Threshold + horizontal-dominance check
   // so vertical page scrolls and chevron taps both still work normally.
@@ -909,6 +914,17 @@ function CalendarView({ history, onBack }) {
       <TopBar
         title="CALENDAR"
         left={<button onClick={onBack} className="btn-ghost p-2" aria-label="Back"><ChevronLeft size={22} /></button>}
+        right={
+          !isCurrentMonth ? (
+            <button
+              onClick={goToday}
+              className="btn-secondary text-xs px-2.5 py-1 rounded-full"
+              aria-label="Jump to current month"
+            >
+              Today
+            </button>
+          ) : null
+        }
       />
       <div className="flex-1 min-h-0 px-5 pb-6 overflow-y-auto scrollbar-thin">
         <div
