@@ -919,22 +919,24 @@ function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSecon
           </div>
         </div>
 
-        {/* Trajectory card: chart + goal + estimate, anchored together. Whole
-            card is a button to History when there's history to view. */}
+        {/* Trajectory card: chart + goal + estimate, anchored together. The
+            chart area is reserved for the future scrub gesture, so the
+            "View history" affordance is a discrete pill button in the
+            top-right rather than a whole-card click. */}
         {hasHistory ? (
-          <button
-            type="button"
-            onClick={onHistory}
-            aria-label="View history"
-            className="card p-4 mb-4 w-full text-left transition-colors hover:border-[color:var(--ink-muted)]"
-          >
+          <div className="card p-4 mb-4">
             <div className="flex items-center justify-between mb-2">
               <div className="text-xs tracking-widest uppercase" style={{ color: 'var(--ink-muted)' }}>
                 Trajectory
               </div>
-              <div className="text-xs" style={{ color: 'var(--ink-soft)' }}>
+              <button
+                type="button"
+                onClick={onHistory}
+                aria-label="View history"
+                className="btn-secondary text-xs px-2.5 py-1 rounded-full"
+              >
                 View history →
-              </div>
+              </button>
             </div>
             <ProgressionChart
               history={history}
@@ -961,7 +963,7 @@ function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSecon
                 {estimateText(goalProgress)}
               </div>
             </div>
-          </button>
+          </div>
         ) : (
           /* No history yet: goal card stands alone */
           <div className="card p-4 mb-4">
