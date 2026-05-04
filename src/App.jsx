@@ -319,6 +319,20 @@ function roundDuration(seconds) {
 /* ---- Next-rehearsal suggestion ---- */
 const GROWTH_MULTIPLIERS = { slow: 0.5, typical: 1.0, fast: 1.5 };
 
+// Highest Great/Good rehearsal in history. Used only by the algorithm
+// inspector dev tool to surface a quick "demonstrated capacity" reference.
+// The projection algorithm itself doesn't consult this — it bases the next
+// session on the most recent entry plus a graduated increment.
+function demonstratedPeak(sorted) {
+  let peak = 0;
+  for (const s of sorted) {
+    if ((s.rating === 1 || s.rating === 2) && s.rehearsalSeconds > peak) {
+      peak = s.rehearsalSeconds;
+    }
+  }
+  return peak;
+}
+
 function computeNextRehearsal(history, opts = {}) {
   const { forceShakeUp = false, growthIntensity = 'typical' } = opts;
   const growthMult = GROWTH_MULTIPLIERS[growthIntensity] ?? 1.0;
@@ -479,7 +493,7 @@ function simulateProjection(history, goalSeconds, maxSteps = Infinity, opts = {}
     if (last.rehearsalSeconds >= goalSeconds) break;
     const next = computeNextRehearsal(simHistory, { growthIntensity });
     lastNum += 1;
-    out.push({ number: lastNum, seconds: next.seconds, kind: next.kind });
+    out.push({ number: lastNum, seconds: next.seconds, kind: next.kind, reason: next.reason });
     simHistory = [
       ...simHistory,
       {
@@ -2879,7 +2893,229 @@ function SettingsView({
   );
 }
 
-function TestProfilesView({ onLoadProfile, chartAnimSpeed, onChartAnimSpeedChange, onBack }) {
+/* =====================================================================
+   ALGORITHM INSPECTOR — Settings → Developer tools → Algorithm.
+   Read-only window into computeNextRehearsal + simulateProjection.
+   The "scratch" history is initialised from the real history but kept
+   in local state, so editing here never touches localStorage. Useful
+   for reasoning about edge cases (Fair below peak, Bad with no peak,
+   etc.) without manually injecting test data.
+   ===================================================================== */
+function AlgorithmInspector({ history, growthIntensity, goalSeconds, onBack }) {
+  const initialFromHistory = () =>
+    [...history]
+      .sort((a, b) => a.number - b.number)
+      .map(s => ({ rehearsalSeconds: s.rehearsalSeconds, rating: s.rating ?? null }));
+
+  const [scratch, setScratch] = useState(initialFromHistory);
+
+  const fullScratch = scratch.map((s, i) => ({
+    number: i + 1,
+    date: ymdLocal(new Date()),
+    warmUps: [],
+    notes: '',
+    rehearsalSeconds: s.rehearsalSeconds,
+    rating: s.rating,
+  }));
+
+  const peak = scratch.length > 0 ? demonstratedPeak(fullScratch) : 0;
+  const next = computeNextRehearsal(fullScratch, { growthIntensity });
+  const projection = simulateProjection(fullScratch, goalSeconds, 10, { growthIntensity });
+  const last = fullScratch[fullScratch.length - 1] || null;
+
+  // Find the (latest) session whose rating is Great/Good and whose
+  // rehearsalSeconds equals the peak — useful for "set by #N" annotation.
+  let peakSession = null;
+  if (peak > 0) {
+    for (let i = fullScratch.length - 1; i >= 0; i--) {
+      const s = fullScratch[i];
+      if ((s.rating === 1 || s.rating === 2) && s.rehearsalSeconds === peak) {
+        peakSession = s;
+        break;
+      }
+    }
+  }
+
+  const updateRow = (i, patch) =>
+    setScratch(prev => prev.map((row, idx) => idx === i ? { ...row, ...patch } : row));
+  const removeRow = (i) => setScratch(prev => prev.filter((_, idx) => idx !== i));
+  const addRow = () => setScratch(prev => [...prev, { rehearsalSeconds: 300, rating: 1 }]);
+  const resetToReal = () => setScratch(initialFromHistory());
+  const clearAll = () => setScratch([]);
+
+  const kindColor = (k) =>
+    k === 'shake-up' ? 'var(--clay)'
+    : k === 'step-back' ? 'var(--brick)'
+    : k === 'repeat' ? 'var(--amber)'
+    : 'var(--ink-muted)';
+
+  return (
+    <div className="fade-up flex flex-col flex-1 min-h-0">
+      <TopBar
+        title="ALGORITHM"
+        left={<button onClick={onBack} className="btn-ghost p-2" aria-label="Back"><ChevronLeft size={22} /></button>}
+      />
+      <div className="flex-1 min-h-0 px-5 pb-6 overflow-y-auto scrollbar-thin">
+        {/* Current state */}
+        <div className="card p-4 mb-3">
+          <div className="text-xs tracking-widest uppercase mb-2" style={{ color: 'var(--ink-muted)' }}>State</div>
+          <div className="text-sm flex items-baseline gap-2 flex-wrap" style={{ color: 'var(--ink)' }}>
+            <span style={{ color: 'var(--ink-muted)' }}>Peak</span>
+            <span className="serif tabular">{peak > 0 ? formatTime(peak) : '—'}</span>
+            {peakSession && (
+              <span className="text-xs italic" style={{ color: 'var(--ink-soft)' }}>
+                set by #{peakSession.number} ({ratingMeta(peakSession.rating)?.label})
+              </span>
+            )}
+          </div>
+          {last && (
+            <div className="text-sm flex items-baseline gap-2 flex-wrap mt-1" style={{ color: 'var(--ink)' }}>
+              <span style={{ color: 'var(--ink-muted)' }}>Last</span>
+              <span className="serif tabular">{formatTime(last.rehearsalSeconds)}</span>
+              <span className="text-xs italic" style={{ color: 'var(--ink-soft)' }}>
+                #{last.number} ({ratingMeta(last.rating)?.label || 'Unrated'})
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* Next */}
+        <div className="card p-4 mb-3">
+          <div className="text-xs tracking-widest uppercase mb-2" style={{ color: 'var(--ink-muted)' }}>Next session</div>
+          <div className="flex items-baseline gap-3">
+            <div className="serif tabular" style={{ fontSize: 30, color: 'var(--ink)', fontWeight: 500, lineHeight: 1 }}>
+              {formatTime(next.seconds)}
+            </div>
+            <div className="text-xs uppercase tracking-widest" style={{ color: kindColor(next.kind), fontWeight: 500 }}>
+              {next.kind}
+            </div>
+          </div>
+          <div className="text-xs italic mt-2 leading-snug" style={{ color: 'var(--ink-soft)' }}>
+            {next.reason}
+          </div>
+        </div>
+
+        {/* Projection */}
+        <div className="card p-4 mb-4">
+          <div className="text-xs tracking-widest uppercase mb-2" style={{ color: 'var(--ink-muted)' }}>Projection (next 10)</div>
+          {projection.length === 0 ? (
+            <div className="text-xs italic" style={{ color: 'var(--ink-muted)' }}>
+              {scratch.length === 0 ? 'No history.' : 'Goal already reached.'}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {projection.map(p => (
+                <div key={p.number} className="text-xs leading-snug">
+                  <div className="flex items-baseline gap-2">
+                    <span className="tabular" style={{ color: 'var(--ink-muted)', minWidth: 24 }}>#{p.number}</span>
+                    <span className="serif tabular" style={{ color: 'var(--ink)', minWidth: 50 }}>{formatTime(p.seconds)}</span>
+                    <span className="uppercase tracking-wider" style={{ color: kindColor(p.kind), fontSize: 9, fontWeight: 500 }}>
+                      {p.kind}
+                    </span>
+                  </div>
+                  <div className="italic mt-0.5 ml-7" style={{ color: 'var(--ink-soft)' }}>{p.reason}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Editor */}
+        <div className="text-xs tracking-widest uppercase mb-2 px-1" style={{ color: 'var(--ink-muted)' }}>
+          Scratch history ({scratch.length})
+        </div>
+        <div className="card p-3 mb-3">
+          {scratch.length === 0 && (
+            <div className="text-xs italic py-3 text-center" style={{ color: 'var(--ink-muted)' }}>No sessions.</div>
+          )}
+          {scratch.map((s, i) => (
+            <ScratchRow
+              key={i}
+              index={i}
+              row={s}
+              onUpdate={(patch) => updateRow(i, patch)}
+              onRemove={() => removeRow(i)}
+            />
+          ))}
+          <button
+            onClick={addRow}
+            className="btn-ghost text-xs w-full py-2 flex items-center justify-center gap-1 mt-1"
+            style={{ color: 'var(--ink-muted)' }}
+          >
+            <Plus size={12} /> Add session
+          </button>
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            onClick={resetToReal}
+            className="btn-ghost flex-1 text-xs py-2.5 rounded-full"
+            style={{ border: '1px solid var(--line)' }}
+          >
+            Reset to real
+          </button>
+          <button
+            onClick={clearAll}
+            className="btn-ghost flex-1 text-xs py-2.5 rounded-full"
+            style={{ color: 'var(--brick)', border: '1px solid var(--line)' }}
+          >
+            Clear all
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ScratchRow({ index, row, onUpdate, onRemove }) {
+  // Local string state for the duration input so the user can type freely
+  // (incl. partial values like "1:") without the parent's formatTime
+  // pre-empting the input. Commits on blur or Enter.
+  const [text, setText] = useState(formatTime(row.rehearsalSeconds));
+  useEffect(() => { setText(formatTime(row.rehearsalSeconds)); }, [row.rehearsalSeconds]);
+
+  const commit = () => {
+    const parsed = parseMMSS(text);
+    if (parsed !== null && parsed > 0) {
+      onUpdate({ rehearsalSeconds: parsed });
+      setText(formatTime(parsed));
+    } else {
+      setText(formatTime(row.rehearsalSeconds));
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2 mb-1.5">
+      <span className="text-xs tabular" style={{ color: 'var(--ink-muted)', minWidth: 22 }}>#{index + 1}</span>
+      <input
+        type="text"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
+        className="input-text px-2 py-1.5 rounded text-sm tabular"
+        style={{ width: 64 }}
+        inputMode="numeric"
+      />
+      <select
+        value={row.rating ?? ''}
+        onChange={(e) => onUpdate({ rating: e.target.value === '' ? null : Number(e.target.value) })}
+        className="input-text px-2 py-1.5 rounded text-sm flex-1"
+      >
+        <option value="">Unrated</option>
+        <option value="1">Great</option>
+        <option value="2">Good</option>
+        <option value="3">Fair</option>
+        <option value="4">Bad</option>
+      </select>
+      <button onClick={onRemove} className="btn-ghost p-1.5" aria-label="Remove">
+        <X size={14} />
+      </button>
+    </div>
+  );
+}
+
+function TestProfilesView({ onLoadProfile, chartAnimSpeed, onChartAnimSpeedChange, onOpenInspector, onBack }) {
   return (
     <div className="fade-up flex flex-col flex-1 min-h-0">
       <TopBar
@@ -2956,6 +3192,24 @@ function TestProfilesView({ onLoadProfile, chartAnimSpeed, onChartAnimSpeedChang
             })}
           </div>
         </div>
+
+        {/* Algorithm inspector — read-only window into the projection
+            algorithm with a scratch-history editor for trying hypotheticals
+            without touching real data. */}
+        <button
+          onClick={onOpenInspector}
+          className="card w-full text-left p-4 mt-6 transition-all flex items-center justify-between"
+        >
+          <div>
+            <div className="text-sm" style={{ color: 'var(--ink)', fontWeight: 500 }}>
+              Algorithm inspector
+            </div>
+            <div className="text-xs mt-0.5 leading-snug" style={{ color: 'var(--ink-muted)' }}>
+              See peak, next session, and the next 10 projected — edit a scratch history to test scenarios.
+            </div>
+          </div>
+          <ChevronRight size={16} style={{ color: 'var(--ink-muted)', flexShrink: 0, marginLeft: 12 }} />
+        </button>
       </div>
     </div>
   );
@@ -3648,7 +3902,15 @@ export default function App() {
             onLoadProfile={handleLoadProfile}
             chartAnimSpeed={chartAnimSpeed}
             onChartAnimSpeedChange={setChartAnimSpeed}
+            onOpenInspector={() => setView('inspector')}
             onBack={() => setView('settings')}
+          />
+        ) : view === 'inspector' ? (
+          <AlgorithmInspector
+            history={history}
+            growthIntensity={growthIntensity}
+            goalSeconds={goalSeconds}
+            onBack={() => setView('settings-profiles')}
           />
         ) : view === 'setup' ? (
           <Setup
