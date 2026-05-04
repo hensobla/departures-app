@@ -1177,12 +1177,9 @@ const CHART_ANIM_OPTIONS = [
 function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSeconds, goalProgress,
                 onStart, onHistory, onShowOnboarding, onSettings, onCalendar, growthIntensity = 'typical',
                 resumable, onResume, onDiscardActive,
-                showGoalReachedRec, onUpdateGoal, onDismissGoalReached }) {
+                showGoalReachedRec, onUpdateGoal, onDismissGoalReached,
+                chartAnimSpeed = 'fast' }) {
   const hasHistory = history && history.length > 0;
-  // Animation speed for the compact Sessions chart. Default is 'medium' so
-  // the user sees the effect on first load; dev toggles below the tile let
-  // them flip between speeds (or disable) for testing.
-  const [chartAnimSpeed, setChartAnimSpeed] = useState('medium');
   const projection = hasHistory ? simulateProjection(history, goalSeconds, 5, { growthIntensity }) : [];
   const kindMeta = HOME_KIND_META[suggestion?.kind] || HOME_KIND_META['step-up'];
   const KindIcon = kindMeta.Icon;
@@ -1330,41 +1327,6 @@ function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSecon
             </div>
             <div className="serif italic text-sm" style={{ color: 'var(--ink-soft)' }}>
               {estimateText(goalProgress)}
-            </div>
-          </div>
-        )}
-
-        {/* DEV: chart-animation speed toggles. Visible in this build for
-            tuning the animation; should move to Settings → Developer tools
-            (or be removed) before this lands as a permanent feature. */}
-        {hasHistory && (
-          <div
-            className="card p-3 mb-4"
-            style={{ borderStyle: 'dashed', borderColor: 'var(--gold)' }}
-          >
-            <div className="text-xs tracking-widest uppercase mb-2 px-1" style={{ color: 'var(--ink-muted)' }}>
-              DEV · Chart animation
-            </div>
-            <div className="flex items-center gap-1 p-1 rounded-full" style={{ background: 'var(--bg-warm)' }}>
-              {CHART_ANIM_OPTIONS.map(opt => {
-                const active = chartAnimSpeed === opt.id;
-                return (
-                  <button
-                    key={opt.id}
-                    onClick={() => setChartAnimSpeed(opt.id)}
-                    className="flex-1 text-xs px-2 py-1.5 rounded-full transition-all whitespace-nowrap"
-                    style={{
-                      background: active ? 'var(--surface)' : 'transparent',
-                      color: active ? 'var(--ink)' : 'var(--ink-muted)',
-                      fontWeight: active ? 500 : 400,
-                      border: active ? '1px solid var(--line)' : '1px solid transparent',
-                    }}
-                    aria-pressed={active}
-                  >
-                    {opt.label}
-                  </button>
-                );
-              })}
             </div>
           </div>
         )}
@@ -2842,7 +2804,7 @@ function SettingsView({
   );
 }
 
-function TestProfilesView({ onLoadProfile, onBack }) {
+function TestProfilesView({ onLoadProfile, chartAnimSpeed, onChartAnimSpeedChange, onBack }) {
   return (
     <div className="fade-up flex flex-col flex-1 min-h-0">
       <TopBar
@@ -2874,7 +2836,7 @@ function TestProfilesView({ onLoadProfile, onBack }) {
         <div className="text-xs tracking-widest uppercase mb-2 px-1" style={{ color: 'var(--ink-muted)' }}>
           Presets
         </div>
-        <div className="space-y-2">
+        <div className="space-y-2 mb-6">
           {TEST_PROFILES.map(p => (
             <button
               key={p.id}
@@ -2889,6 +2851,35 @@ function TestProfilesView({ onLoadProfile, onBack }) {
               </div>
             </button>
           ))}
+        </div>
+
+        {/* Chart animation speed — affects the dot reveal on the home
+            Sessions tile. Saved with the rest of settings. */}
+        <div className="text-xs tracking-widest uppercase mb-2 px-1" style={{ color: 'var(--ink-muted)' }}>
+          Chart animation
+        </div>
+        <div className="card p-3">
+          <div className="flex items-center gap-1 p-1 rounded-full" style={{ background: 'var(--bg-warm)' }}>
+            {CHART_ANIM_OPTIONS.map(opt => {
+              const active = chartAnimSpeed === opt.id;
+              return (
+                <button
+                  key={opt.id}
+                  onClick={() => onChartAnimSpeedChange(opt.id)}
+                  className="flex-1 text-xs px-2 py-1.5 rounded-full transition-all whitespace-nowrap"
+                  style={{
+                    background: active ? 'var(--surface)' : 'transparent',
+                    color: active ? 'var(--ink)' : 'var(--ink-muted)',
+                    fontWeight: active ? 500 : 400,
+                    border: active ? '1px solid var(--line)' : '1px solid transparent',
+                  }}
+                  aria-pressed={active}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
     </div>
@@ -3101,6 +3092,9 @@ export default function App() {
   const [growthIntensity, setGrowthIntensity] = useState('typical');
   // 'system' = follow OS preference (default); 'light'/'dark' = forced.
   const [themeMode, setThemeMode] = useState('system');
+  // Default to 'fast' so the reveal feels snappy on the home tile; users
+  // can override (or switch to 'off') via Settings → Developer tools.
+  const [chartAnimSpeed, setChartAnimSpeed] = useState('fast');
   const [notifPermission, setNotifPermission] = useState(() => getNotificationPermission());
   const [goalSeconds, setGoalSeconds] = useState(DEFAULT_GOAL_SECONDS);
   // Persisted as the goalSeconds value for which the goal-reached
@@ -3187,6 +3181,9 @@ export default function App() {
       if (['system', 'light', 'dark'].includes(settings.themeMode)) {
         setThemeMode(settings.themeMode);
       }
+      if (['off', 'slow', 'medium', 'fast'].includes(settings.chartAnimSpeed)) {
+        setChartAnimSpeed(settings.chartAnimSpeed);
+      }
     }
 
     if (!storageGet('onboardingDismissed') && hist.length === 0) {
@@ -3215,8 +3212,9 @@ export default function App() {
       growthIntensity,
       goalSeconds,
       themeMode,
+      chartAnimSpeed,
     });
-  }, [notificationsEnabledRaw, volume, growthIntensity, goalSeconds, themeMode, loaded]);
+  }, [notificationsEnabledRaw, volume, growthIntensity, goalSeconds, themeMode, chartAnimSpeed, loaded]);
 
   // Apply themeMode to <html data-theme>. CSS does the rest:
   //   - 'system' → no attribute → :root + prefers-color-scheme media query
@@ -3552,6 +3550,7 @@ export default function App() {
             showGoalReachedRec={showGoalReachedRec}
             onUpdateGoal={handleUpdateGoalFromHome}
             onDismissGoalReached={handleDismissGoalReached}
+            chartAnimSpeed={chartAnimSpeed}
           />
         ) : view === 'settings' ? (
           <SettingsView
@@ -3572,6 +3571,8 @@ export default function App() {
         ) : view === 'settings-profiles' ? (
           <TestProfilesView
             onLoadProfile={handleLoadProfile}
+            chartAnimSpeed={chartAnimSpeed}
+            onChartAnimSpeedChange={setChartAnimSpeed}
             onBack={() => setView('settings')}
           />
         ) : view === 'setup' ? (
