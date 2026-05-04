@@ -5,7 +5,8 @@ import {
   ChevronLeft, RotateCcw, Check, Download, Upload, Clock, ChevronRight,
   Pencil, Trash2, Plus, Target, TrendingUp, TrendingDown, Info,
   DoorOpen, Heart, Share, MoreVertical, Settings as SettingsIcon,
-  Bell, BellOff, Gauge, Calendar as CalendarIcon
+  Bell, BellOff, Gauge, Calendar as CalendarIcon,
+  Sun, Moon, Monitor
 } from 'lucide-react';
 
 /* =====================================================================
@@ -129,10 +130,10 @@ const WARMUP_MAX = 10;
 
 /* Rating metadata — matches trainer's rating table exactly */
 const RATINGS = [
-  { num: 1, label: 'Great', desc: 'No barking',                              color: '#7A8F6F' }, // sage
-  { num: 2, label: 'Good',  desc: 'Barked for less than 1/4 rehearsal time', color: '#C9A94A' }, // gold
-  { num: 3, label: 'Fair',  desc: 'Barked for less than 1/2 rehearsal time', color: '#D88A3A' }, // amber
-  { num: 4, label: 'Bad',   desc: 'Continuous barking',                      color: '#A63A2C' }, // brick red
+  { num: 1, label: 'Great', desc: 'No barking',                              color: 'var(--sage)' },
+  { num: 2, label: 'Good',  desc: 'Barked for less than 1/4 rehearsal time', color: 'var(--gold)' },
+  { num: 3, label: 'Fair',  desc: 'Barked for less than 1/2 rehearsal time', color: 'var(--amber)' },
+  { num: 4, label: 'Bad',   desc: 'Continuous barking',                      color: 'var(--brick)' },
 ];
 const ratingMeta = (n) => RATINGS.find(r => r.num === n) || null;
 const ratingColor = (n) => ratingMeta(n)?.color || null;
@@ -909,7 +910,7 @@ function CheckDot({ done, size = 16 }) {
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}
       >
-        <Check size={Math.round(size * 0.65)} strokeWidth={3} style={{ color: '#FBF7EF' }} />
+        <Check size={Math.round(size * 0.65)} strokeWidth={3} style={{ color: 'var(--on-clay)' }} />
       </div>
     );
   }
@@ -1266,7 +1267,7 @@ function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSecon
         <LastSevenDaysStrip history={history} onOpenCalendar={onCalendar} />
 
         {resumable && (
-          <div className="card p-4 mb-4" style={{ borderColor: 'var(--amber)', background: '#FDF6EA' }}>
+          <div className="card p-4 mb-4" style={{ borderColor: 'var(--amber)', background: 'var(--bg-amber-tint)' }}>
             <div className="flex items-start gap-3">
               <Clock size={18} style={{ color: 'var(--amber)', marginTop: 2 }} />
               <div className="flex-1">
@@ -2073,7 +2074,7 @@ function ProgressionChart({
   const renderHistoryDot = (props) => {
     const { cx, cy, payload, index } = props;
     if (payload?.minutes == null) return <g key={index} />;
-    const color = ratingColor(payload.rating) || '#B8563A';
+    const color = ratingColor(payload.rating) || 'var(--clay)';
     return <circle key={index} cx={cx} cy={cy} r={compact ? 3 : 3.5} fill={color} stroke="none" />;
   };
 
@@ -2089,8 +2090,8 @@ function ProgressionChart({
         cx={cx}
         cy={cy}
         r={compact ? 3 : 3.5}
-        fill="#FBF7EF"
-        stroke="#B8563A"
+        fill="var(--surface)"
+        stroke="var(--clay)"
         strokeOpacity={0.6}
         strokeWidth={1.5}
       />
@@ -2124,18 +2125,18 @@ function ProgressionChart({
     return (
       <div
         style={{
-          background: '#FBF7EF',
-          border: '1px solid #D9CEB8',
+          background: 'var(--surface)',
+          border: '1px solid var(--line)',
           borderRadius: 8,
           padding: '6px 10px',
           fontSize: 12,
           fontFamily: 'IBM Plex Sans',
         }}
       >
-        <div style={{ color: '#8B7B6C', fontSize: 11, marginBottom: 2 }}>
+        <div style={{ color: 'var(--ink-muted)', fontSize: 11, marginBottom: 2 }}>
           Session #{label}
         </div>
-        <div style={{ color: isProj ? '#8B7B6C' : '#1F1915' }}>{detail}</div>
+        <div style={{ color: isProj ? 'var(--ink-muted)' : 'var(--ink)' }}>{detail}</div>
       </div>
     );
   };
@@ -2192,12 +2193,12 @@ function ProgressionChart({
             data={chartData}
             margin={compact ? { top: 10, right: 10, left: 10, bottom: 4 } : { top: 8, right: 12, left: -24, bottom: 0 }}
           >
-            <CartesianGrid stroke="#D9CEB8" strokeDasharray="2 4" vertical={false} />
+            <CartesianGrid stroke="var(--line)" strokeDasharray="2 4" vertical={false} />
             <XAxis
               dataKey="session"
               hide={compact}
-              tick={{ fontSize: 10, fill: '#8B7B6C' }}
-              axisLine={{ stroke: '#D9CEB8' }}
+              tick={{ fontSize: 10, fill: 'var(--ink-muted)' }}
+              axisLine={{ stroke: 'var(--line)' }}
               tickLine={false}
               tickFormatter={(n) => `#${n}`}
               minTickGap={chartRange === '7' ? 0 : 16}
@@ -2207,22 +2208,22 @@ function ProgressionChart({
             <YAxis
               hide={compact}
               width={compact ? 0 : undefined}
-              tick={{ fontSize: 10, fill: '#8B7B6C' }}
+              tick={{ fontSize: 10, fill: 'var(--ink-muted)' }}
               axisLine={false}
               tickLine={false}
               unit="m"
               domain={[0, yMax]}
             />
             {/* Custom cursor: clay-tinted vertical line so the scrub position
-                reads clearly on the cream surface. Recharts' default is a
-                generic gray that gets lost against the chart grid. */}
+                reads clearly on either light or dark surface. Recharts'
+                default is a generic gray that gets lost against the grid. */}
             <Tooltip
               content={tooltipContent}
-              cursor={{ stroke: '#B8563A', strokeOpacity: 0.45, strokeWidth: 1, strokeDasharray: '3 3' }}
+              cursor={{ stroke: 'var(--clay)', strokeOpacity: 0.45, strokeWidth: 1, strokeDasharray: '3 3' }}
             />
             <ReferenceLine
               y={goalMinutes}
-              stroke="#7A8F6F"
+              stroke="var(--sage)"
               strokeDasharray="4 4"
               strokeWidth={1.5}
               label={
@@ -2231,7 +2232,7 @@ function ProgressionChart({
                   : {
                       value: `Goal ${formatTimeLong(goalSeconds)}`,
                       position: 'insideTopRight',
-                      fill: '#7A8F6F',
+                      fill: 'var(--sage)',
                       fontSize: 10,
                       fontFamily: 'IBM Plex Sans',
                     }
@@ -2240,7 +2241,7 @@ function ProgressionChart({
             {projectionRows.length > 0 && lastHistorySession != null && (
               <ReferenceLine
                 x={lastHistorySession}
-                stroke="#D9CEB8"
+                stroke="var(--line)"
                 strokeWidth={1}
                 strokeDasharray="2 3"
               />
@@ -2251,19 +2252,19 @@ function ProgressionChart({
             <Line
               type="monotone"
               dataKey="projMinutes"
-              stroke="#B8563A"
+              stroke="var(--clay)"
               strokeOpacity={0.5}
               strokeWidth={1.5}
               strokeDasharray="4 4"
               dot={renderProjDot}
-              activeDot={{ r: compact ? 7 : 7, fill: '#FBF7EF', stroke: '#B8563A', strokeWidth: 1.75 }}
+              activeDot={{ r: compact ? 7 : 7, fill: 'var(--surface)', stroke: 'var(--clay)', strokeWidth: 1.75 }}
               isAnimationActive={false}
               connectNulls={false}
             />
             <Line
               type="monotone"
               dataKey="minutes"
-              stroke="#B8563A"
+              stroke="var(--clay)"
               strokeWidth={1.5}
               dot={renderHistoryDot}
               activeDot={{ r: compact ? 7 : 7, strokeWidth: 1.5 }}
@@ -2282,7 +2283,7 @@ function ProgressionChart({
             </div>
           ))}
           <div className="flex items-center gap-1.5">
-            <div style={{ width: 8, height: 8, borderRadius: 999, background: '#B8563A' }} />
+            <div style={{ width: 8, height: 8, borderRadius: 999, background: 'var(--clay)' }} />
             <span>Unrated</span>
           </div>
           {projectionRows.length > 0 && (
@@ -2354,7 +2355,7 @@ function HistoryView({ history, goalSeconds, growthIntensity = 'typical',
                     {s.rating && (
                       <span
                         className="text-xs px-1.5 py-0.5 rounded-full"
-                        style={{ background: rc + '22', color: rc, fontWeight: 500 }}
+                        style={{ background: `color-mix(in srgb, ${rc} 13%, transparent)`, color: rc, fontWeight: 500 }}
                       >
                         {ratingMeta(s.rating).label}
                       </span>
@@ -2426,9 +2427,15 @@ const GROWTH_OPTIONS = [
   },
 ];
 
+const THEME_OPTIONS = [
+  { id: 'system', label: 'System', Icon: Monitor },
+  { id: 'light',  label: 'Light',  Icon: Sun },
+  { id: 'dark',   label: 'Dark',   Icon: Moon },
+];
+
 function SettingsView({
-  volume, notificationsEnabled, growthIntensity, notifPermission,
-  onVolumeChange, onNotificationsChange, onGrowthIntensityChange,
+  volume, notificationsEnabled, growthIntensity, themeMode, notifPermission,
+  onVolumeChange, onNotificationsChange, onGrowthIntensityChange, onThemeModeChange,
   onPreviewSound, onTestNotification, onLoadProfile, onBack,
 }) {
   const disabled = !notificationsEnabled;
@@ -2549,6 +2556,43 @@ function SettingsView({
                 Test notification
               </button>
             </div>
+          </div>
+        </div>
+
+        {/* Appearance — light/dark/system */}
+        <div className="card p-4 mb-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Sun size={16} style={{ color: 'var(--ink-muted)' }} />
+            <div className="text-xs tracking-widest uppercase" style={{ color: 'var(--ink-muted)' }}>
+              Appearance
+            </div>
+          </div>
+          <div className="text-xs mb-3" style={{ color: 'var(--ink-muted)' }}>
+            System follows your phone's light/dark setting. Light or Dark forces one regardless of system.
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            {THEME_OPTIONS.map(opt => {
+              const active = themeMode === opt.id;
+              const Icon = opt.Icon;
+              return (
+                <button
+                  key={opt.id}
+                  onClick={() => onThemeModeChange(opt.id)}
+                  className="rounded-xl py-3 px-2 transition-all flex flex-col items-center gap-1.5"
+                  style={{
+                    background: active ? 'var(--bg-warm)' : 'transparent',
+                    border: active ? '1.5px solid var(--clay)' : '1.5px solid var(--line)',
+                    color: active ? 'var(--ink)' : 'var(--ink-soft)',
+                  }}
+                  aria-pressed={active}
+                >
+                  <Icon size={18} />
+                  <div className="text-xs" style={{ fontWeight: active ? 500 : 400 }}>
+                    {opt.label}
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -2831,6 +2875,8 @@ export default function App() {
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [volume, setVolume] = useState(80);
   const [growthIntensity, setGrowthIntensity] = useState('typical');
+  // 'system' = follow OS preference (default); 'light'/'dark' = forced.
+  const [themeMode, setThemeMode] = useState('system');
   const [notifPermission, setNotifPermission] = useState(() => getNotificationPermission());
   const [goalSeconds, setGoalSeconds] = useState(DEFAULT_GOAL_SECONDS);
   const [loaded, setLoaded] = useState(false);
@@ -2909,6 +2955,9 @@ export default function App() {
       if (typeof settings.goalSeconds === 'number' && settings.goalSeconds > 0) {
         setGoalSeconds(settings.goalSeconds);
       }
+      if (['system', 'light', 'dark'].includes(settings.themeMode)) {
+        setThemeMode(settings.themeMode);
+      }
     }
 
     if (!storageGet('onboardingDismissed') && hist.length === 0) {
@@ -2931,8 +2980,19 @@ export default function App() {
       volume,
       growthIntensity,
       goalSeconds,
+      themeMode,
     });
-  }, [notificationsEnabled, volume, growthIntensity, goalSeconds, loaded]);
+  }, [notificationsEnabled, volume, growthIntensity, goalSeconds, themeMode, loaded]);
+
+  // Apply themeMode to <html data-theme>. CSS does the rest:
+  //   - 'system' → no attribute → :root + prefers-color-scheme media query
+  //   - 'light'  → data-theme="light" → light vars (overrides media query)
+  //   - 'dark'   → data-theme="dark"  → dark vars (overrides media query)
+  useEffect(() => {
+    const html = document.documentElement;
+    if (themeMode === 'system') html.removeAttribute('data-theme');
+    else html.setAttribute('data-theme', themeMode);
+  }, [themeMode]);
 
   const nextNumber = history ? (history.length ? Math.max(...history.map(s => s.number)) + 1 : 1) : 1;
   const goalProgress = computeGoalProgress(history || [], goalSeconds, { growthIntensity });
@@ -3193,7 +3253,7 @@ export default function App() {
         <div
           role="alert"
           className="px-5 py-2 text-xs flex items-center gap-2"
-          style={{ background: 'var(--clay)', color: '#FBF7EF' }}
+          style={{ background: 'var(--clay)', color: 'var(--on-clay)' }}
         >
           <span className="flex-1 leading-snug">
             Couldn't save to this device. Your last change may not persist — export your data from History to be safe.
@@ -3201,7 +3261,7 @@ export default function App() {
           <button
             onClick={() => setStorageError(null)}
             className="btn-ghost text-xs underline"
-            style={{ color: '#FBF7EF' }}
+            style={{ color: 'var(--on-clay)' }}
             aria-label="Dismiss storage error"
           >
             Dismiss
@@ -3243,10 +3303,12 @@ export default function App() {
             volume={volume}
             notificationsEnabled={notificationsEnabled}
             growthIntensity={growthIntensity}
+            themeMode={themeMode}
             notifPermission={notifPermission}
             onVolumeChange={setVolume}
             onNotificationsChange={handleNotificationsChange}
             onGrowthIntensityChange={setGrowthIntensity}
+            onThemeModeChange={setThemeMode}
             onPreviewSound={() => playAlarm(volume / 100)}
             onTestNotification={handleTestNotification}
             onLoadProfile={handleLoadProfile}
