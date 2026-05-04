@@ -358,24 +358,31 @@ function computeNextRehearsal(history, opts = {}) {
 
   let increment;
   if (last.rating === 1) {
-    // Great: moderate bump
-    if (basis < 300) increment = 30;
-    else if (basis < 600) increment = 60;
-    else if (basis < 1200) increment = 120;
-    else if (basis < 1800) increment = 180;
-    else increment = 300;
+    // Great: moderate bump. Steps grow with magnitude so progress doesn't
+    // feel artificially slow once the dog is comfortable with longer
+    // sessions — past 40 min we assume a solid foundation and bump harder.
+    if (basis < 300) increment = 30;          // <5min   → +30s
+    else if (basis < 600) increment = 60;     // <10min  → +1m
+    else if (basis < 1200) increment = 120;   // <20min  → +2m
+    else if (basis < 1800) increment = 180;   // <30min  → +3m
+    else if (basis < 2400) increment = 300;   // <40min  → +5m
+    else if (basis < 3600) increment = 480;   // <60min  → +8m
+    else increment = 600;                     // ≥60min  → +10m
   } else if (last.rating === 2) {
-    // Good: small bump
-    if (basis < 300) increment = 15;
-    else if (basis < 600) increment = 30;
-    else if (basis < 1200) increment = 60;
-    else if (basis < 1800) increment = 90;
-    else increment = 120;
+    // Good: small bump. Same shape as Great, scaled down.
+    if (basis < 300) increment = 15;          // <5min   → +15s
+    else if (basis < 600) increment = 30;     // <10min  → +30s
+    else if (basis < 1200) increment = 60;    // <20min  → +1m
+    else if (basis < 1800) increment = 90;    // <30min  → +1.5m
+    else if (basis < 2400) increment = 120;   // <40min  → +2m
+    else if (basis < 3600) increment = 180;   // <60min  → +3m
+    else increment = 240;                     // ≥60min  → +4m
   } else {
     // Unrated (seed data): conservative default
     if (basis < 600) increment = 30;
     else if (basis < 1200) increment = 60;
-    else increment = 120;
+    else if (basis < 2400) increment = 120;
+    else increment = 240;
   }
 
   // Scale by growth intensity, then quantise to 15s so durations stay "clean".
