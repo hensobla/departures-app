@@ -336,11 +336,23 @@ function simulateProjection(history, goalSeconds, maxSteps = Infinity, opts = {}
   return out;
 }
 
+// "Current" for goal-progress purposes is the longest acceptable
+// (Great/Good/unrated) rehearsal the user has ever completed — not
+// necessarily their most recent session. This way the headline % reflects
+// what they've actually achieved and doesn't drop on shake-ups or Bad
+// sessions. Falls back to the longest session of any rating if no
+// acceptable sessions exist yet (so a brand-new user with only a Fair-
+// rated session still sees a non-zero bar).
+function peakAcceptableSeconds(history) {
+  if (!history || history.length === 0) return 0;
+  const acceptable = history.filter(s => isAcceptable(s.rating));
+  const pool = acceptable.length > 0 ? acceptable : history;
+  return pool.reduce((max, s) => Math.max(max, s.rehearsalSeconds || 0), 0);
+}
+
 function estimateSessionsToGoal(history, goalSeconds, opts = {}) {
   if (!history || history.length === 0) return null;
-  const sorted = [...history].sort((a, b) => a.number - b.number);
-  const current = sorted[sorted.length - 1].rehearsalSeconds;
-  if (current >= goalSeconds) return 0;
+  if (peakAcceptableSeconds(history) >= goalSeconds) return 0;
   const proj = simulateProjection(history, goalSeconds, Infinity, opts);
   if (!proj.length) return null;
   const last = proj[proj.length - 1];
@@ -352,15 +364,14 @@ function computeGoalProgress(history, goalSeconds, opts = {}) {
   if (!history || history.length === 0) {
     return { current: 0, percent: 0, estimate: null, trend: 'no-data' };
   }
-  const sorted = [...history].sort((a, b) => a.number - b.number);
-  const current = sorted[sorted.length - 1].rehearsalSeconds;
+  const current = peakAcceptableSeconds(history);
   const percent = Math.min(100, Math.round((current / goalSeconds) * 100));
 
   if (current >= goalSeconds) {
     return { current, percent: 100, estimate: 0, trend: 'reached' };
   }
 
-  const progressSessions = sorted.filter(s => isAcceptable(s.rating));
+  const progressSessions = history.filter(s => isAcceptable(s.rating));
   if (progressSessions.length < 3) {
     return { current, percent, estimate: null, trend: 'no-data' };
   }
