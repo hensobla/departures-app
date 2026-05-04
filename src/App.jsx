@@ -1263,7 +1263,7 @@ function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSecon
           <div className="card p-4 mb-4">
             <div className="flex items-center justify-between mb-2">
               <div className="text-xs tracking-widest uppercase" style={{ color: 'var(--ink-muted)' }}>
-                Trajectory
+                Sessions
               </div>
               <button
                 type="button"
