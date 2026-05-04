@@ -26,6 +26,10 @@
      In dark theme this is the same value because clay is still dark
      enough that cream text stays readable. */
   --on-clay: #FBF7EF;
+  /* Filled circle background for completed-day checkmarks (calendar +
+     last-7-days strip). Stays sage in light, deepened in dark for
+     contrast against the cream check icon. */
+  --check-bg: #7A8F6F;
 }
 
 /* Dark theme via prefers-color-scheme — applies when the user's OS is in
@@ -47,6 +51,10 @@
     --brick: #CC5D4D;
     --bg-amber-tint: #2E2418;
     --on-clay: #FBF7EF;
+    /* Darker sage so the cream check on completed-day dots reads
+       clearly. The lifted dark-theme --sage (#99A88E) is too light
+       to give the check enough contrast. */
+    --check-bg: #5A7050;
   }
 }
 
@@ -67,6 +75,7 @@
   --brick: #CC5D4D;
   --bg-amber-tint: #2E2418;
   --on-clay: #FBF7EF;
+  --check-bg: #5A7050;
 }
 
 html, body, #root { background: var(--bg); }

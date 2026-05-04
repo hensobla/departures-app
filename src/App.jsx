@@ -913,7 +913,7 @@ function CheckDot({ done, size = 16 }) {
       <div
         style={{
           width: size, height: size, borderRadius: 999,
-          background: 'var(--sage)',
+          background: 'var(--check-bg)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}
       >
@@ -1161,7 +1161,8 @@ const HOME_KIND_META = {
 
 function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSeconds, goalProgress,
                 onStart, onHistory, onShowOnboarding, onSettings, onCalendar, growthIntensity = 'typical',
-                resumable, onResume, onDiscardActive }) {
+                resumable, onResume, onDiscardActive,
+                showGoalReachedRec, onUpdateGoal, onDismissGoalReached }) {
   const hasHistory = history && history.length > 0;
   const projection = hasHistory ? simulateProjection(history, goalSeconds, 5, { growthIntensity }) : [];
   const kindMeta = HOME_KIND_META[suggestion?.kind] || HOME_KIND_META['step-up'];
@@ -1204,6 +1205,48 @@ function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSecon
             <span className="serif italic">{suggestion?.reason}</span>
           </div>
         </div>
+
+        {/* Goal-reached recommendation. Shows when the user has hit their
+            current goal (peak acceptable session ≥ goalSeconds) and they
+            haven't dismissed for this particular goal value. Dismissal is
+            keyed on goalSeconds so a future goal can re-trigger it. */}
+        {showGoalReachedRec && (
+          <div
+            className="card p-4 mb-4"
+            style={{ borderColor: 'var(--check-bg)' }}
+          >
+            <div className="flex items-start gap-3 mb-3">
+              <div
+                className="rounded-full flex items-center justify-center shrink-0"
+                style={{ width: 32, height: 32, background: 'var(--check-bg)' }}
+              >
+                <Check size={18} strokeWidth={3} style={{ color: 'var(--on-clay)' }} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm mb-1" style={{ color: 'var(--ink)', fontWeight: 500 }}>
+                  You've reached your goal of {formatTimeLong(goalSeconds)}.
+                </div>
+                <div className="text-xs leading-snug" style={{ color: 'var(--ink-soft)' }}>
+                  Set a new goal to keep building, or dismiss this if you're happy here.
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={onUpdateGoal}
+                className="btn-primary flex-1 py-2 rounded-full text-sm"
+              >
+                Update goal
+              </button>
+              <button
+                onClick={onDismissGoalReached}
+                className="btn-secondary px-4 py-2 rounded-full text-sm"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Trajectory card: chart + goal + estimate, anchored together. The
             chart area is reserved for the future scrub gesture, so the
@@ -2929,6 +2972,11 @@ export default function App() {
   const [themeMode, setThemeMode] = useState('system');
   const [notifPermission, setNotifPermission] = useState(() => getNotificationPermission());
   const [goalSeconds, setGoalSeconds] = useState(DEFAULT_GOAL_SECONDS);
+  // Persisted as the goalSeconds value for which the goal-reached
+  // recommendation has been dismissed. Re-shows automatically when the
+  // user changes the goal and reaches the new one, since the stored
+  // value won't match the new goalSeconds.
+  const [goalReachedDismissedFor, setGoalReachedDismissedFor] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState(null);
@@ -3013,6 +3061,9 @@ export default function App() {
     if (!storageGet('onboardingDismissed') && hist.length === 0) {
       setView('onboarding');
     }
+
+    const dismissedFor = storageGet('goalReachedDismissedFor');
+    if (typeof dismissedFor === 'number') setGoalReachedDismissedFor(dismissedFor);
 
     setLoaded(true);
   }, []);
@@ -3299,6 +3350,24 @@ export default function App() {
     setGoalSeconds(newGoalSeconds);
   };
 
+  // Recommendation logic for the "you've reached your goal" tile.
+  // Visible when the user has reached the current goal AND hasn't
+  // dismissed for this exact goalSeconds value. Picking a new goal in
+  // the editor naturally re-arms it because the stored value no longer
+  // matches the new goalSeconds.
+  const showGoalReachedRec =
+    goalProgress.trend === 'reached' && goalReachedDismissedFor !== goalSeconds;
+
+  const handleDismissGoalReached = () => {
+    setGoalReachedDismissedFor(goalSeconds);
+    storageSet('goalReachedDismissedFor', goalSeconds);
+  };
+
+  const handleUpdateGoalFromHome = () => {
+    // Send the user to History where the goal editor lives.
+    setView('history');
+  };
+
   return (
     <div className="app-root">
       {storageError && (
@@ -3349,6 +3418,9 @@ export default function App() {
             resumable={activeSession}
             onResume={handleResume}
             onDiscardActive={handleDiscardActive}
+            showGoalReachedRec={showGoalReachedRec}
+            onUpdateGoal={handleUpdateGoalFromHome}
+            onDismissGoalReached={handleDismissGoalReached}
           />
         ) : view === 'settings' ? (
           <SettingsView
