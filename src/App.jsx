@@ -1643,7 +1643,13 @@ function SessionView({ session, soundEnabled, toggleSound, volume = 100, onUpdat
       <TopBar
         title={`SESSION ${session.number}`}
         left={<button onClick={abort} className="btn-ghost p-2"><X size={22} /></button>}
-        right={<button onClick={toggleSound} className="btn-ghost p-2">{soundEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}</button>}
+        // Volume toggle only meaningful when notifications are an enabled
+        // feature. Hidden alongside the rest of the notifications UI when
+        // the feature flag is off.
+        right={NOTIFICATIONS_FEATURE_ENABLED
+          ? <button onClick={toggleSound} className="btn-ghost p-2">{soundEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}</button>
+          : null
+        }
       />
       <div className="flex-1 flex flex-col items-center justify-center px-6 text-center">
         <div className="text-xs tracking-widest uppercase mb-4" style={{ color: 'var(--ink-muted)' }}>
