@@ -5,7 +5,8 @@ import {
   ChevronLeft, RotateCcw, Check, Download, Upload, Clock, ChevronRight,
   Pencil, Trash2, Plus, Target, TrendingUp, TrendingDown, Info,
   DoorOpen, Heart, Share, MoreVertical, Settings as SettingsIcon,
-  Bell, BellOff, Gauge, Calendar as CalendarIcon
+  Bell, BellOff, Gauge, Calendar as CalendarIcon,
+  Sun, Moon, Monitor
 } from 'lucide-react';
 
 /* =====================================================================
@@ -34,16 +35,112 @@ const SEED_HISTORY = [
 
 const DEFAULT_GOAL_SECONDS = 3600; // 1 hour
 
+// Feature flag. Notifications still need polish (background reliability on
+// iOS, silent-switch handling, PWA install gate). Until that lands, hide the
+// settings UI and force the runtime "enabled" value to false so no chimes
+// or system notifications fire — the underlying code paths stay in place
+// and the persisted user preference is preserved for when we flip this on.
+const NOTIFICATIONS_FEATURE_ENABLED = false;
+
+/* =====================================================================
+   TEST PROFILES — swappable preset histories for development/testing.
+   Surfaced via the Settings "Test profiles" card. Loading a profile
+   replaces the user's history (after a confirm dialog); the previous
+   value is preserved by storageSetWithBackup at history.backup.
+   ===================================================================== */
+
+// Generates a realistic ~5-month progression: 60 sessions ending today,
+// with a mix of step-ups, shake-ups, fair days, and bad days. The
+// underlying "target" follows a logistic curve so the chart starts near
+// 30s, crosses the 1h goal around session 40, and plateaus around
+// 75 min. Shake-ups and bad days dip the actual recorded duration off
+// the target; the user's peak (and goal-progress %) keeps climbing.
+function generateLotsOfData() {
+  const sessions = [];
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const SESSIONS = 60;
+  const SPAN_DAYS = 150; // ~5 months
+  // Logistic params: f(i) = L / (1 + exp(-k * (i - midpoint)))
+  // L=4500 (75min ceiling), k=0.15, midpoint=30. Crosses goal (3600) at i≈40.
+  const L = 4500;
+  const K = 0.15;
+  const MID = 30;
+
+  for (let i = 0; i < SESSIONS; i++) {
+    const daysAgo = Math.round((SESSIONS - 1 - i) * (SPAN_DAYS / SESSIONS));
+    const date = new Date(today);
+    date.setDate(today.getDate() - daysAgo);
+
+    const targetRaw = L / (1 + Math.exp(-K * (i - MID)));
+    const target = Math.max(30, Math.round(targetRaw / 15) * 15);
+
+    // Deterministic pseudo-random — same i always gives same outcome.
+    const seed = (i * 7919 + 31) % 100;
+    let recordDur, rating;
+
+    if (i > 8 && seed < 10) {
+      // Shake-up — deliberately shorter, still rated well.
+      recordDur = Math.max(15, Math.round(target * 0.55 / 15) * 15);
+      rating = 1;
+    } else if (i > 8 && seed < 17) {
+      // Bad day — shorter and rated 4.
+      recordDur = Math.max(15, Math.round(target * 0.45 / 15) * 15);
+      rating = 4;
+    } else if (i > 8 && seed < 25) {
+      // Fair day — slightly under target, rated 3.
+      recordDur = Math.max(15, Math.round(target * 0.85 / 15) * 15);
+      rating = 3;
+    } else {
+      // Good progression — at target.
+      recordDur = target;
+      rating = (seed % 5 === 0) ? 1 : 2;
+    }
+
+    sessions.push({
+      number: i + 1,
+      date: ymdLocal(date),
+      warmUps: i < 20 ? [10, 5, 15] : [15, 30, 10, 25, 5],
+      rehearsalSeconds: recordDur,
+      notes: '',
+      rating,
+    });
+  }
+  return sessions;
+}
+
+const TEST_PROFILES = [
+  {
+    id: 'lots',
+    label: 'Lots of data',
+    desc: '~60 sessions over the last 5 months. Includes shake-ups, fair days, bad days, and crosses the goal.',
+    generate: generateLotsOfData,
+  },
+  {
+    id: 'demo',
+    label: 'Default demo',
+    desc: 'The original 17-session example that ships with the app.',
+    generate: () => SEED_HISTORY.map(s => ({ ...s })),
+  },
+  {
+    id: 'empty',
+    label: 'No data',
+    desc: 'Empty history. Useful for testing the new-user state and onboarding.',
+    generate: () => [],
+  },
+];
+
 // Allowed range for the warm-up count picker on the Setup screen.
 const WARMUP_MIN = 5;
 const WARMUP_MAX = 10;
 
 /* Rating metadata — matches trainer's rating table exactly */
 const RATINGS = [
-  { num: 1, label: 'Great', desc: 'No barking',                              color: '#7A8F6F' }, // sage
-  { num: 2, label: 'Good',  desc: 'Barked for less than 1/4 rehearsal time', color: '#C9A94A' }, // gold
-  { num: 3, label: 'Fair',  desc: 'Barked for less than 1/2 rehearsal time', color: '#D88A3A' }, // amber
-  { num: 4, label: 'Bad',   desc: 'Continuous barking',                      color: '#A63A2C' }, // brick red
+  { num: 1, label: 'Great', desc: 'No barking',                              color: 'var(--sage)' },
+  { num: 2, label: 'Good',  desc: 'Barked for less than 1/4 rehearsal time', color: 'var(--gold)' },
+  { num: 3, label: 'Fair',  desc: 'Barked for less than 1/2 rehearsal time', color: 'var(--amber)' },
+  { num: 4, label: 'Bad',   desc: 'Continuous barking',                      color: 'var(--brick)' },
 ];
 const ratingMeta = (n) => RATINGS.find(r => r.num === n) || null;
 const ratingColor = (n) => ratingMeta(n)?.color || null;
@@ -261,24 +358,31 @@ function computeNextRehearsal(history, opts = {}) {
 
   let increment;
   if (last.rating === 1) {
-    // Great: moderate bump
-    if (basis < 300) increment = 30;
-    else if (basis < 600) increment = 60;
-    else if (basis < 1200) increment = 120;
-    else if (basis < 1800) increment = 180;
-    else increment = 300;
+    // Great: moderate bump. Steps grow with magnitude so progress doesn't
+    // feel artificially slow once the dog is comfortable with longer
+    // sessions — past 40 min we assume a solid foundation and bump harder.
+    if (basis < 300) increment = 30;          // <5min   → +30s
+    else if (basis < 600) increment = 60;     // <10min  → +1m
+    else if (basis < 1200) increment = 120;   // <20min  → +2m
+    else if (basis < 1800) increment = 180;   // <30min  → +3m
+    else if (basis < 2400) increment = 300;   // <40min  → +5m
+    else if (basis < 3600) increment = 480;   // <60min  → +8m
+    else increment = 600;                     // ≥60min  → +10m
   } else if (last.rating === 2) {
-    // Good: small bump
-    if (basis < 300) increment = 15;
-    else if (basis < 600) increment = 30;
-    else if (basis < 1200) increment = 60;
-    else if (basis < 1800) increment = 90;
-    else increment = 120;
+    // Good: small bump. Same shape as Great, scaled down.
+    if (basis < 300) increment = 15;          // <5min   → +15s
+    else if (basis < 600) increment = 30;     // <10min  → +30s
+    else if (basis < 1200) increment = 60;    // <20min  → +1m
+    else if (basis < 1800) increment = 90;    // <30min  → +1.5m
+    else if (basis < 2400) increment = 120;   // <40min  → +2m
+    else if (basis < 3600) increment = 180;   // <60min  → +3m
+    else increment = 240;                     // ≥60min  → +4m
   } else {
     // Unrated (seed data): conservative default
     if (basis < 600) increment = 30;
     else if (basis < 1200) increment = 60;
-    else increment = 120;
+    else if (basis < 2400) increment = 120;
+    else increment = 240;
   }
 
   // Scale by growth intensity, then quantise to 15s so durations stay "clean".
@@ -816,11 +920,11 @@ function CheckDot({ done, size = 16 }) {
       <div
         style={{
           width: size, height: size, borderRadius: 999,
-          background: 'var(--sage)',
+          background: 'var(--check-bg)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}
       >
-        <Check size={Math.round(size * 0.65)} strokeWidth={3} style={{ color: '#FBF7EF' }} />
+        <Check size={Math.round(size * 0.65)} strokeWidth={3} style={{ color: 'var(--on-clay)' }} />
       </div>
     );
   }
@@ -1064,7 +1168,8 @@ const HOME_KIND_META = {
 
 function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSeconds, goalProgress,
                 onStart, onHistory, onShowOnboarding, onSettings, onCalendar, growthIntensity = 'typical',
-                resumable, onResume, onDiscardActive }) {
+                resumable, onResume, onDiscardActive,
+                showGoalReachedRec, onUpdateGoal, onDismissGoalReached }) {
   const hasHistory = history && history.length > 0;
   const projection = hasHistory ? simulateProjection(history, goalSeconds, 5, { growthIntensity }) : [];
   const kindMeta = HOME_KIND_META[suggestion?.kind] || HOME_KIND_META['step-up'];
@@ -1107,6 +1212,48 @@ function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSecon
             <span className="serif italic">{suggestion?.reason}</span>
           </div>
         </div>
+
+        {/* Goal-reached recommendation. Shows when the user has hit their
+            current goal (peak acceptable session ≥ goalSeconds) and they
+            haven't dismissed for this particular goal value. Dismissal is
+            keyed on goalSeconds so a future goal can re-trigger it. */}
+        {showGoalReachedRec && (
+          <div
+            className="card p-4 mb-4"
+            style={{ borderColor: 'var(--check-bg)' }}
+          >
+            <div className="flex items-start gap-3 mb-3">
+              <div
+                className="rounded-full flex items-center justify-center shrink-0"
+                style={{ width: 32, height: 32, background: 'var(--check-bg)' }}
+              >
+                <Check size={18} strokeWidth={3} style={{ color: 'var(--on-clay)' }} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm mb-1" style={{ color: 'var(--ink)', fontWeight: 500 }}>
+                  You've reached your goal of {formatTimeLong(goalSeconds)}.
+                </div>
+                <div className="text-xs leading-snug" style={{ color: 'var(--ink-soft)' }}>
+                  Set a new goal to keep building, or dismiss this if you're happy here.
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={onUpdateGoal}
+                className="btn-primary flex-1 py-2 rounded-full text-sm"
+              >
+                Update goal
+              </button>
+              <button
+                onClick={onDismissGoalReached}
+                className="btn-secondary px-4 py-2 rounded-full text-sm"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Trajectory card: chart + goal + estimate, anchored together. The
             chart area is reserved for the future scrub gesture, so the
@@ -1177,7 +1324,7 @@ function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSecon
         <LastSevenDaysStrip history={history} onOpenCalendar={onCalendar} />
 
         {resumable && (
-          <div className="card p-4 mb-4" style={{ borderColor: 'var(--amber)', background: '#FDF6EA' }}>
+          <div className="card p-4 mb-4" style={{ borderColor: 'var(--amber)', background: 'var(--bg-amber-tint)' }}>
             <div className="flex items-start gap-3">
               <Clock size={18} style={{ color: 'var(--amber)', marginTop: 2 }} />
               <div className="flex-1">
@@ -1503,7 +1650,13 @@ function SessionView({ session, soundEnabled, toggleSound, volume = 100, onUpdat
       <TopBar
         title={`SESSION ${session.number}`}
         left={<button onClick={abort} className="btn-ghost p-2"><X size={22} /></button>}
-        right={<button onClick={toggleSound} className="btn-ghost p-2">{soundEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}</button>}
+        // Volume toggle only meaningful when notifications are an enabled
+        // feature. Hidden alongside the rest of the notifications UI when
+        // the feature flag is off.
+        right={NOTIFICATIONS_FEATURE_ENABLED
+          ? <button onClick={toggleSound} className="btn-ghost p-2">{soundEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}</button>
+          : null
+        }
       />
       <div className="flex-1 flex flex-col items-center justify-center px-6 text-center">
         <div className="text-xs tracking-widest uppercase mb-4" style={{ color: 'var(--ink-muted)' }}>
@@ -1984,7 +2137,7 @@ function ProgressionChart({
   const renderHistoryDot = (props) => {
     const { cx, cy, payload, index } = props;
     if (payload?.minutes == null) return <g key={index} />;
-    const color = ratingColor(payload.rating) || '#B8563A';
+    const color = ratingColor(payload.rating) || 'var(--clay)';
     return <circle key={index} cx={cx} cy={cy} r={compact ? 3 : 3.5} fill={color} stroke="none" />;
   };
 
@@ -2000,8 +2153,8 @@ function ProgressionChart({
         cx={cx}
         cy={cy}
         r={compact ? 3 : 3.5}
-        fill="#FBF7EF"
-        stroke="#B8563A"
+        fill="var(--surface)"
+        stroke="var(--clay)"
         strokeOpacity={0.6}
         strokeWidth={1.5}
       />
@@ -2035,18 +2188,18 @@ function ProgressionChart({
     return (
       <div
         style={{
-          background: '#FBF7EF',
-          border: '1px solid #D9CEB8',
+          background: 'var(--surface)',
+          border: '1px solid var(--line)',
           borderRadius: 8,
           padding: '6px 10px',
           fontSize: 12,
           fontFamily: 'IBM Plex Sans',
         }}
       >
-        <div style={{ color: '#8B7B6C', fontSize: 11, marginBottom: 2 }}>
+        <div style={{ color: 'var(--ink-muted)', fontSize: 11, marginBottom: 2 }}>
           Session #{label}
         </div>
-        <div style={{ color: isProj ? '#8B7B6C' : '#1F1915' }}>{detail}</div>
+        <div style={{ color: isProj ? 'var(--ink-muted)' : 'var(--ink)' }}>{detail}</div>
       </div>
     );
   };
@@ -2103,12 +2256,12 @@ function ProgressionChart({
             data={chartData}
             margin={compact ? { top: 10, right: 10, left: 10, bottom: 4 } : { top: 8, right: 12, left: -24, bottom: 0 }}
           >
-            <CartesianGrid stroke="#D9CEB8" strokeDasharray="2 4" vertical={false} />
+            <CartesianGrid stroke="var(--line)" strokeDasharray="2 4" vertical={false} />
             <XAxis
               dataKey="session"
               hide={compact}
-              tick={{ fontSize: 10, fill: '#8B7B6C' }}
-              axisLine={{ stroke: '#D9CEB8' }}
+              tick={{ fontSize: 10, fill: 'var(--ink-muted)' }}
+              axisLine={{ stroke: 'var(--line)' }}
               tickLine={false}
               tickFormatter={(n) => `#${n}`}
               minTickGap={chartRange === '7' ? 0 : 16}
@@ -2118,22 +2271,22 @@ function ProgressionChart({
             <YAxis
               hide={compact}
               width={compact ? 0 : undefined}
-              tick={{ fontSize: 10, fill: '#8B7B6C' }}
+              tick={{ fontSize: 10, fill: 'var(--ink-muted)' }}
               axisLine={false}
               tickLine={false}
               unit="m"
               domain={[0, yMax]}
             />
             {/* Custom cursor: clay-tinted vertical line so the scrub position
-                reads clearly on the cream surface. Recharts' default is a
-                generic gray that gets lost against the chart grid. */}
+                reads clearly on either light or dark surface. Recharts'
+                default is a generic gray that gets lost against the grid. */}
             <Tooltip
               content={tooltipContent}
-              cursor={{ stroke: '#B8563A', strokeOpacity: 0.45, strokeWidth: 1, strokeDasharray: '3 3' }}
+              cursor={{ stroke: 'var(--clay)', strokeOpacity: 0.45, strokeWidth: 1, strokeDasharray: '3 3' }}
             />
             <ReferenceLine
               y={goalMinutes}
-              stroke="#7A8F6F"
+              stroke="var(--sage)"
               strokeDasharray="4 4"
               strokeWidth={1.5}
               label={
@@ -2142,7 +2295,7 @@ function ProgressionChart({
                   : {
                       value: `Goal ${formatTimeLong(goalSeconds)}`,
                       position: 'insideTopRight',
-                      fill: '#7A8F6F',
+                      fill: 'var(--sage)',
                       fontSize: 10,
                       fontFamily: 'IBM Plex Sans',
                     }
@@ -2151,7 +2304,7 @@ function ProgressionChart({
             {projectionRows.length > 0 && lastHistorySession != null && (
               <ReferenceLine
                 x={lastHistorySession}
-                stroke="#D9CEB8"
+                stroke="var(--line)"
                 strokeWidth={1}
                 strokeDasharray="2 3"
               />
@@ -2162,19 +2315,19 @@ function ProgressionChart({
             <Line
               type="monotone"
               dataKey="projMinutes"
-              stroke="#B8563A"
+              stroke="var(--clay)"
               strokeOpacity={0.5}
               strokeWidth={1.5}
               strokeDasharray="4 4"
               dot={renderProjDot}
-              activeDot={{ r: compact ? 7 : 7, fill: '#FBF7EF', stroke: '#B8563A', strokeWidth: 1.75 }}
+              activeDot={{ r: compact ? 7 : 7, fill: 'var(--surface)', stroke: 'var(--clay)', strokeWidth: 1.75 }}
               isAnimationActive={false}
               connectNulls={false}
             />
             <Line
               type="monotone"
               dataKey="minutes"
-              stroke="#B8563A"
+              stroke="var(--clay)"
               strokeWidth={1.5}
               dot={renderHistoryDot}
               activeDot={{ r: compact ? 7 : 7, strokeWidth: 1.5 }}
@@ -2193,7 +2346,7 @@ function ProgressionChart({
             </div>
           ))}
           <div className="flex items-center gap-1.5">
-            <div style={{ width: 8, height: 8, borderRadius: 999, background: '#B8563A' }} />
+            <div style={{ width: 8, height: 8, borderRadius: 999, background: 'var(--clay)' }} />
             <span>Unrated</span>
           </div>
           {projectionRows.length > 0 && (
@@ -2265,7 +2418,7 @@ function HistoryView({ history, goalSeconds, growthIntensity = 'typical',
                     {s.rating && (
                       <span
                         className="text-xs px-1.5 py-0.5 rounded-full"
-                        style={{ background: rc + '22', color: rc, fontWeight: 500 }}
+                        style={{ background: `color-mix(in srgb, ${rc} 13%, transparent)`, color: rc, fontWeight: 500 }}
                       >
                         {ratingMeta(s.rating).label}
                       </span>
@@ -2337,10 +2490,16 @@ const GROWTH_OPTIONS = [
   },
 ];
 
+const THEME_OPTIONS = [
+  { id: 'system', label: 'System', Icon: Monitor },
+  { id: 'light',  label: 'Light',  Icon: Sun },
+  { id: 'dark',   label: 'Dark',   Icon: Moon },
+];
+
 function SettingsView({
-  volume, notificationsEnabled, growthIntensity, notifPermission,
-  onVolumeChange, onNotificationsChange, onGrowthIntensityChange,
-  onPreviewSound, onTestNotification, onBack,
+  volume, notificationsEnabled, growthIntensity, themeMode, notifPermission,
+  onVolumeChange, onNotificationsChange, onGrowthIntensityChange, onThemeModeChange,
+  onPreviewSound, onTestNotification, onOpenTestProfiles, onBack,
 }) {
   const disabled = !notificationsEnabled;
 
@@ -2364,7 +2523,10 @@ function SettingsView({
       />
       <div className="flex-1 min-h-0 px-5 pb-6 overflow-y-auto scrollbar-thin">
 
-        {/* Notifications + Audio (merged) */}
+        {/* Notifications + Audio (merged). Gated on the feature flag — the
+            entire card is hidden until the notification experience is
+            polished enough to ship to users. */}
+        {NOTIFICATIONS_FEATURE_ENABLED && (
         <div className="card p-4 mb-4">
           <div className="flex items-center gap-2 mb-3">
             {notificationsEnabled ? <Bell size={16} style={{ color: 'var(--ink-muted)' }} /> : <BellOff size={16} style={{ color: 'var(--ink-muted)' }} />}
@@ -2462,6 +2624,44 @@ function SettingsView({
             </div>
           </div>
         </div>
+        )}
+
+        {/* Appearance — light/dark/system */}
+        <div className="card p-4 mb-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Sun size={16} style={{ color: 'var(--ink-muted)' }} />
+            <div className="text-xs tracking-widest uppercase" style={{ color: 'var(--ink-muted)' }}>
+              Appearance
+            </div>
+          </div>
+          <div className="text-xs mb-3" style={{ color: 'var(--ink-muted)' }}>
+            System follows your phone's light/dark setting. Light or Dark forces one regardless of system.
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            {THEME_OPTIONS.map(opt => {
+              const active = themeMode === opt.id;
+              const Icon = opt.Icon;
+              return (
+                <button
+                  key={opt.id}
+                  onClick={() => onThemeModeChange(opt.id)}
+                  className="rounded-xl py-3 px-2 transition-all flex flex-col items-center gap-1.5"
+                  style={{
+                    background: active ? 'var(--bg-warm)' : 'transparent',
+                    border: active ? '1.5px solid var(--clay)' : '1.5px solid var(--line)',
+                    color: active ? 'var(--ink)' : 'var(--ink-soft)',
+                  }}
+                  aria-pressed={active}
+                >
+                  <Icon size={18} />
+                  <div className="text-xs" style={{ fontWeight: active ? 500 : 400 }}>
+                    {opt.label}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
         {/* Growth Intensity */}
         <div className="card p-4 mb-4">
@@ -2507,6 +2707,71 @@ function SettingsView({
           </div>
         </div>
 
+        {/* Quiet entry to the developer / advanced sub-page. Lives at the
+            bottom so it doesn't compete with the main settings, but is
+            still findable for testing. */}
+        <button
+          onClick={onOpenTestProfiles}
+          className="btn-ghost text-xs w-full py-3 mt-2 flex items-center justify-center gap-1"
+          style={{ color: 'var(--ink-muted)' }}
+        >
+          Developer tools
+          <ChevronRight size={12} />
+        </button>
+
+      </div>
+    </div>
+  );
+}
+
+function TestProfilesView({ onLoadProfile, onBack }) {
+  return (
+    <div className="fade-up flex flex-col flex-1 min-h-0">
+      <TopBar
+        title="DEVELOPER TOOLS"
+        left={<button onClick={onBack} className="btn-ghost p-2" aria-label="Back"><ChevronLeft size={22} /></button>}
+      />
+      <div className="flex-1 min-h-0 px-5 pb-6 overflow-y-auto scrollbar-thin">
+        {/* Warning banner — clay-bordered to read as "be careful". */}
+        <div
+          className="card p-4 mb-4"
+          style={{
+            borderColor: 'var(--clay)',
+            borderStyle: 'dashed',
+            background: 'color-mix(in srgb, var(--clay) 8%, transparent)',
+          }}
+          role="alert"
+        >
+          <div className="text-xs tracking-widest uppercase mb-2" style={{ color: 'var(--clay)', fontWeight: 500 }}>
+            Heads up
+          </div>
+          <div className="text-sm leading-snug" style={{ color: 'var(--ink)' }}>
+            These options replace your training history. Use carefully.
+          </div>
+          <div className="text-xs leading-snug mt-2" style={{ color: 'var(--ink-soft)' }}>
+            Your current data is preserved at <span className="mono">history.backup</span> in device storage before each swap, but recovering it requires opening the browser console.
+          </div>
+        </div>
+
+        <div className="text-xs tracking-widest uppercase mb-2 px-1" style={{ color: 'var(--ink-muted)' }}>
+          Presets
+        </div>
+        <div className="space-y-2">
+          {TEST_PROFILES.map(p => (
+            <button
+              key={p.id}
+              onClick={() => onLoadProfile(p.id)}
+              className="card w-full text-left p-4 transition-all"
+            >
+              <div className="text-sm" style={{ color: 'var(--ink)', fontWeight: 500 }}>
+                {p.label}
+              </div>
+              <div className="text-xs mt-0.5 leading-snug" style={{ color: 'var(--ink-muted)' }}>
+                {p.desc}
+              </div>
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -2707,11 +2972,24 @@ export default function App() {
   const [view, setView] = useState('home');
   const [history, setHistory] = useState(null);
   const [activeSession, setActiveSession] = useState(null);
-  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  // notificationsEnabledRaw is the user's persisted preference. The
+  // effective value (notificationsEnabled) gates on the feature flag so
+  // alerts can't fire while the experience is still being polished. We
+  // keep the raw state around so the user's choice survives the toggle
+  // being re-enabled in a future build.
+  const [notificationsEnabledRaw, setNotificationsEnabled] = useState(true);
+  const notificationsEnabled = NOTIFICATIONS_FEATURE_ENABLED && notificationsEnabledRaw;
   const [volume, setVolume] = useState(80);
   const [growthIntensity, setGrowthIntensity] = useState('typical');
+  // 'system' = follow OS preference (default); 'light'/'dark' = forced.
+  const [themeMode, setThemeMode] = useState('system');
   const [notifPermission, setNotifPermission] = useState(() => getNotificationPermission());
   const [goalSeconds, setGoalSeconds] = useState(DEFAULT_GOAL_SECONDS);
+  // Persisted as the goalSeconds value for which the goal-reached
+  // recommendation has been dismissed. Re-shows automatically when the
+  // user changes the goal and reaches the new one, since the stored
+  // value won't match the new goalSeconds.
+  const [goalReachedDismissedFor, setGoalReachedDismissedFor] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState(null);
@@ -2788,11 +3066,17 @@ export default function App() {
       if (typeof settings.goalSeconds === 'number' && settings.goalSeconds > 0) {
         setGoalSeconds(settings.goalSeconds);
       }
+      if (['system', 'light', 'dark'].includes(settings.themeMode)) {
+        setThemeMode(settings.themeMode);
+      }
     }
 
     if (!storageGet('onboardingDismissed') && hist.length === 0) {
       setView('onboarding');
     }
+
+    const dismissedFor = storageGet('goalReachedDismissedFor');
+    if (typeof dismissedFor === 'number') setGoalReachedDismissedFor(dismissedFor);
 
     setLoaded(true);
   }, []);
@@ -2806,12 +3090,25 @@ export default function App() {
   useEffect(() => {
     if (!loaded) return;
     storageSet('settings', {
-      notificationsEnabled,
+      // Persist the raw user preference, not the feature-flag-gated value,
+      // so flipping the flag on later restores their original choice.
+      notificationsEnabled: notificationsEnabledRaw,
       volume,
       growthIntensity,
       goalSeconds,
+      themeMode,
     });
-  }, [notificationsEnabled, volume, growthIntensity, goalSeconds, loaded]);
+  }, [notificationsEnabledRaw, volume, growthIntensity, goalSeconds, themeMode, loaded]);
+
+  // Apply themeMode to <html data-theme>. CSS does the rest:
+  //   - 'system' → no attribute → :root + prefers-color-scheme media query
+  //   - 'light'  → data-theme="light" → light vars (overrides media query)
+  //   - 'dark'   → data-theme="dark"  → dark vars (overrides media query)
+  useEffect(() => {
+    const html = document.documentElement;
+    if (themeMode === 'system') html.removeAttribute('data-theme');
+    else html.setAttribute('data-theme', themeMode);
+  }, [themeMode]);
 
   const nextNumber = history ? (history.length ? Math.max(...history.map(s => s.number)) + 1 : 1) : 1;
   const goalProgress = computeGoalProgress(history || [], goalSeconds, { growthIntensity });
@@ -2846,6 +3143,26 @@ export default function App() {
     } else if (perm === 'denied') {
       alert('Notifications are blocked. Enable them for this site in your browser or iOS settings.');
     }
+  };
+
+  const handleLoadProfile = async (id) => {
+    const profile = TEST_PROFILES.find(p => p.id === id);
+    if (!profile) return;
+    const ok = await askConfirm({
+      title: `Load "${profile.label}"?`,
+      message: `This replaces your current history (${(history || []).length} sessions). Your previous data is preserved at history.backup in device storage and can be restored from the browser console if needed.`,
+      confirmLabel: 'Load preset',
+      destructive: true,
+    });
+    if (!ok) return;
+    const data = profile.generate();
+    setHistory(data);
+    storageSetWithBackup('history', data);
+    // Wipe any active session — the resume banner would refer to a number
+    // that may not exist in the new dataset.
+    setActiveSession(null);
+    storageDelete('active');
+    setView('home');
   };
 
   const handleStartSetup = () => setView('setup');
@@ -3046,13 +3363,31 @@ export default function App() {
     setGoalSeconds(newGoalSeconds);
   };
 
+  // Recommendation logic for the "you've reached your goal" tile.
+  // Visible when the user has reached the current goal AND hasn't
+  // dismissed for this exact goalSeconds value. Picking a new goal in
+  // the editor naturally re-arms it because the stored value no longer
+  // matches the new goalSeconds.
+  const showGoalReachedRec =
+    goalProgress.trend === 'reached' && goalReachedDismissedFor !== goalSeconds;
+
+  const handleDismissGoalReached = () => {
+    setGoalReachedDismissedFor(goalSeconds);
+    storageSet('goalReachedDismissedFor', goalSeconds);
+  };
+
+  const handleUpdateGoalFromHome = () => {
+    // Send the user to History where the goal editor lives.
+    setView('history');
+  };
+
   return (
     <div className="app-root">
       {storageError && (
         <div
           role="alert"
           className="px-5 py-2 text-xs flex items-center gap-2"
-          style={{ background: 'var(--clay)', color: '#FBF7EF' }}
+          style={{ background: 'var(--clay)', color: 'var(--on-clay)' }}
         >
           <span className="flex-1 leading-snug">
             Couldn't save to this device. Your last change may not persist — export your data from History to be safe.
@@ -3060,7 +3395,7 @@ export default function App() {
           <button
             onClick={() => setStorageError(null)}
             className="btn-ghost text-xs underline"
-            style={{ color: '#FBF7EF' }}
+            style={{ color: 'var(--on-clay)' }}
             aria-label="Dismiss storage error"
           >
             Dismiss
@@ -3096,19 +3431,30 @@ export default function App() {
             resumable={activeSession}
             onResume={handleResume}
             onDiscardActive={handleDiscardActive}
+            showGoalReachedRec={showGoalReachedRec}
+            onUpdateGoal={handleUpdateGoalFromHome}
+            onDismissGoalReached={handleDismissGoalReached}
           />
         ) : view === 'settings' ? (
           <SettingsView
             volume={volume}
             notificationsEnabled={notificationsEnabled}
             growthIntensity={growthIntensity}
+            themeMode={themeMode}
             notifPermission={notifPermission}
             onVolumeChange={setVolume}
             onNotificationsChange={handleNotificationsChange}
             onGrowthIntensityChange={setGrowthIntensity}
+            onThemeModeChange={setThemeMode}
             onPreviewSound={() => playAlarm(volume / 100)}
             onTestNotification={handleTestNotification}
+            onOpenTestProfiles={() => setView('settings-profiles')}
             onBack={() => setView('home')}
+          />
+        ) : view === 'settings-profiles' ? (
+          <TestProfilesView
+            onLoadProfile={handleLoadProfile}
+            onBack={() => setView('settings')}
           />
         ) : view === 'setup' ? (
           <Setup

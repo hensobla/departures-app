@@ -5,6 +5,7 @@
 @tailwind utilities;
 
 :root {
+  /* Light theme — the original palette. */
   --bg: #F5EFE3;
   --bg-warm: #EDE4D1;
   --surface: #FBF7EF;
@@ -18,9 +19,69 @@
   --amber: #D88A3A;
   --gold: #C9A94A;
   --brick: #A63A2C;
+  /* Surface tints used in a few one-off places (e.g. the resumable
+     session card). Defined as vars so dark theme can override them. */
+  --bg-amber-tint: #FDF6EA;
+  /* Inverse cream — text/icon color when sitting on a clay button.
+     In dark theme this is the same value because clay is still dark
+     enough that cream text stays readable. */
+  --on-clay: #FBF7EF;
+  /* Filled circle background for completed-day checkmarks (calendar +
+     last-7-days strip). Stays sage in light, deepened in dark for
+     contrast against the cream check icon. */
+  --check-bg: #7A8F6F;
+}
+
+/* Dark theme via prefers-color-scheme — applies when the user's OS is in
+   dark mode AND they haven't explicitly forced light/dark in Settings. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #1A1411;
+    --bg-warm: #221C18;
+    --surface: #2A231D;
+    --ink: #F0E8DC;
+    --ink-soft: #C5B89F;
+    --ink-muted: #8B7B6C;
+    --line: #3D3225;
+    --clay: #D67857;
+    --clay-deep: #B8563A;
+    --sage: #99A88E;
+    --amber: #E5A668;
+    --gold: #D9BB60;
+    --brick: #CC5D4D;
+    --bg-amber-tint: #2E2418;
+    --on-clay: #FBF7EF;
+    /* Darker sage so the cream check on completed-day dots reads
+       clearly. The lifted dark-theme --sage (#99A88E) is too light
+       to give the check enough contrast. */
+    --check-bg: #5A7050;
+  }
+}
+
+/* Forced dark via Settings — wins regardless of OS preference. */
+:root[data-theme="dark"] {
+  --bg: #1A1411;
+  --bg-warm: #221C18;
+  --surface: #2A231D;
+  --ink: #F0E8DC;
+  --ink-soft: #C5B89F;
+  --ink-muted: #8B7B6C;
+  --line: #3D3225;
+  --clay: #D67857;
+  --clay-deep: #B8563A;
+  --sage: #99A88E;
+  --amber: #E5A668;
+  --gold: #D9BB60;
+  --brick: #CC5D4D;
+  --bg-amber-tint: #2E2418;
+  --on-clay: #FBF7EF;
+  --check-bg: #5A7050;
 }
 
 html, body, #root { background: var(--bg); }
+/* Match the iOS status bar / browser chrome to the bg color in the
+   chosen theme, so there's no light strip at the top in standalone PWA. */
+html { color-scheme: light dark; }
 
 .app-root {
   height: 100vh;
@@ -42,7 +103,7 @@ html, body, #root { background: var(--bg); }
 .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
 .tabular { font-variant-numeric: tabular-nums; }
 
-.btn-primary { background: var(--clay); color: #FBF7EF; font-weight: 500; letter-spacing: 0.01em; transition: background 0.15s, transform 0.1s; }
+.btn-primary { background: var(--clay); color: var(--on-clay); font-weight: 500; letter-spacing: 0.01em; transition: background 0.15s, transform 0.1s; }
 .btn-primary:hover { background: var(--clay-deep); }
 .btn-primary:active { transform: scale(0.98); }
 .btn-primary:disabled { background: var(--ink-muted); opacity: 0.5; cursor: not-allowed; }

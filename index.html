@@ -7,7 +7,8 @@
     <meta name="description" content="Graduated departure training for separation anxiety." />
 
     <link rel="manifest" href="%BASE_URL%manifest.webmanifest" />
-    <meta name="theme-color" content="#B8563A" />
+    <meta name="theme-color" content="#F5EFE3" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#1A1411" media="(prefers-color-scheme: dark)" />
 
     <link rel="icon" type="image/png" sizes="192x192" href="%BASE_URL%icon-192.png" />
     <link rel="icon" type="image/png" sizes="512x512" href="%BASE_URL%icon-512.png" />
@@ -20,8 +21,15 @@
     <meta name="format-detection" content="telephone=no" />
 
     <style>
+      /* Pre-React paint background (avoids FOUC). Mirrors index.css :root and
+         the prefers-color-scheme override there so the bg matches whatever
+         theme will be applied once React mounts. */
       html, body { background: #F5EFE3; margin: 0; }
       body { overscroll-behavior-y: none; -webkit-tap-highlight-color: transparent; }
+      @media (prefers-color-scheme: dark) {
+        html:not([data-theme="light"]), html:not([data-theme="light"]) body { background: #1A1411; }
+      }
+      html[data-theme="dark"], html[data-theme="dark"] body { background: #1A1411; }
     </style>
   </head>
   <body>
