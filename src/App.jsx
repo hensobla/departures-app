@@ -2648,7 +2648,7 @@ function SettingsView({
           className="btn-ghost text-xs w-full py-3 mt-2 flex items-center justify-center gap-1"
           style={{ color: 'var(--ink-muted)' }}
         >
-          Developer · Test profiles
+          Developer tools
           <ChevronRight size={12} />
         </button>
 
@@ -2661,7 +2661,7 @@ function TestProfilesView({ onLoadProfile, onBack }) {
   return (
     <div className="fade-up flex flex-col flex-1 min-h-0">
       <TopBar
-        title="TEST PROFILES"
+        title="DEVELOPER TOOLS"
         left={<button onClick={onBack} className="btn-ghost p-2" aria-label="Back"><ChevronLeft size={22} /></button>}
       />
       <div className="flex-1 min-h-0 px-5 pb-6 overflow-y-auto scrollbar-thin">
