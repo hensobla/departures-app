@@ -266,19 +266,52 @@ function buildSessionDaySet(history) {
   return set;
 }
 
-function generateWarmUps(count) {
+// Warm-up duration pools sized to the rehearsal length. Short rehearsals
+// (<5 min) keep all warm-ups sub-30s — a 45s warm-up ahead of a 1-min
+// rehearsal is disproportionate. Long rehearsals (>40 min) stretch up to
+// 2 min, since at that scale the dog handles brief disconnects easily and
+// the build-up needs more contrast to feel different from the main event.
+function warmUpPools(rehearsalSeconds) {
+  if (rehearsalSeconds < 300) {
+    return { shortVals: [5, 10], longVals: [15, 20, 25] };
+  }
+  if (rehearsalSeconds > 2400) {
+    return { shortVals: [15, 20, 30, 40, 50], longVals: [60, 75, 90, 105, 120] };
+  }
+  return { shortVals: [5, 10, 15, 20], longVals: [25, 30, 35, 40, 45, 50, 55] };
+}
+
+function pickWarmUpValue(rehearsalSeconds) {
+  const { shortVals, longVals } = warmUpPools(rehearsalSeconds);
+  const pool = Math.random() < 0.4 ? shortVals : longVals;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function generateWarmUps(count, rehearsalSeconds = 600) {
   // Default to a small randomized count so the first session feels fresh
   // each time. Callers (e.g. Shuffle) pass an explicit count to preserve
   // the user's chosen length.
   const total = typeof count === 'number'
     ? Math.max(1, count)
     : 5 + Math.floor(Math.random() * 3);
-  const shortVals = [5, 10, 15, 20];
-  const longVals = [25, 30, 35, 40, 45, 50, 55];
+  const { shortVals, longVals } = warmUpPools(rehearsalSeconds);
   const result = [0];
   for (let i = 0; i < total - 1; i++) {
     const pool = Math.random() < 0.4 ? shortVals : longVals;
     result.push(pool[Math.floor(Math.random() * pool.length)]);
+  }
+  // For >40min rehearsals, ensure the warm-up mix actually contains both
+  // sub-1min and 1+ min values rather than ending up homogeneous by chance.
+  if (rehearsalSeconds > 2400 && total >= 3) {
+    const hasLong = result.slice(1).some(v => v >= 60);
+    const hasShort = result.slice(1).some(v => v > 0 && v < 60);
+    if (!hasLong) {
+      const idx = result.findIndex((v, i) => i > 0 && v > 0 && v < 60);
+      if (idx >= 0) result[idx] = longVals[Math.floor(Math.random() * longVals.length)];
+    } else if (!hasShort) {
+      const idx = result.findIndex((v, i) => i > 0 && v >= 60);
+      if (idx >= 0) result[idx] = shortVals[Math.floor(Math.random() * shortVals.length)];
+    }
   }
   for (let i = result.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -319,18 +352,70 @@ function roundDuration(seconds) {
 /* ---- Next-rehearsal suggestion ---- */
 const GROWTH_MULTIPLIERS = { slow: 0.5, typical: 1.0, fast: 1.5 };
 
-// Highest Great/Good rehearsal in history. Used only by the algorithm
-// inspector dev tool to surface a quick "demonstrated capacity" reference.
-// The projection algorithm itself doesn't consult this — it bases the next
-// session on the most recent entry plus a graduated increment.
+// Demonstrated peak (DP), in seconds: the longest session the dog has
+// successfully completed at Great or Good. Walks history forward, bumping
+// the peak on each Great/Good and dropping it when the user has explicitly
+// marked a Fair/Bad session as a regression (interpretedAs === 'regression').
+// In the regression case, peak drops to the highest Great/Good *strictly
+// shorter* than the regressed session (or 0 if none exists).
+//
+// DP only changes via Great/Good (raises) or via an explicit regression
+// marking by the user (lowers). A Fair/Bad without that marking leaves DP
+// untouched — the algorithm interprets it as an off day, not lost capacity.
 function demonstratedPeak(sorted) {
   let peak = 0;
-  for (const s of sorted) {
-    if ((s.rating === 1 || s.rating === 2) && s.rehearsalSeconds > peak) {
-      peak = s.rehearsalSeconds;
+  for (let i = 0; i < sorted.length; i++) {
+    const s = sorted[i];
+    if (s.rating === 1 || s.rating === 2) {
+      if (s.rehearsalSeconds > peak) peak = s.rehearsalSeconds;
+    } else if ((s.rating === 3 || s.rating === 4) && s.interpretedAs === 'regression') {
+      const cutoff = s.rehearsalSeconds;
+      let newPeak = 0;
+      for (let j = 0; j < i; j++) {
+        const t = sorted[j];
+        if ((t.rating === 1 || t.rating === 2)
+            && t.rehearsalSeconds < cutoff
+            && t.rehearsalSeconds > newPeak) {
+          newPeak = t.rehearsalSeconds;
+        }
+      }
+      peak = newPeak;
     }
   }
   return peak;
+}
+
+// Increment ladder used by the step-up branch. Magnitude scales with basis
+// so progression doesn't crawl once the dog is comfortable at longer
+// sessions. Rating-1 (Great) gets a moderate bump, rating-2 (Good) gets a
+// smaller one, unrated falls back to a conservative default.
+function stepUpIncrement(basis, rating) {
+  if (rating === 1) {
+    if (basis < 300) return 30;          // <5min   → +30s
+    if (basis < 600) return 60;          // <10min  → +1m
+    if (basis < 1200) return 120;        // <20min  → +2m
+    if (basis < 1800) return 180;        // <30min  → +3m
+    if (basis < 2400) return 300;        // <40min  → +5m
+    if (basis < 3600) return 480;        // <60min  → +8m
+    return 600;                          // ≥60min  → +10m
+  }
+  if (rating === 2) {
+    // <5min uses 30s steps regardless of rating: smaller increments below
+    // that floor would frequently round to zero after growth-intensity
+    // scaling, and 30s is the minimum jump that still feels like progress.
+    if (basis < 300) return 30;
+    if (basis < 600) return 30;
+    if (basis < 1200) return 60;
+    if (basis < 1800) return 90;
+    if (basis < 2400) return 120;
+    if (basis < 3600) return 180;
+    return 240;
+  }
+  // Unrated (seed data): conservative default
+  if (basis < 600) return 30;
+  if (basis < 1200) return 60;
+  if (basis < 2400) return 120;
+  return 240;
 }
 
 function computeNextRehearsal(history, opts = {}) {
@@ -343,6 +428,7 @@ function computeNextRehearsal(history, opts = {}) {
   const sorted = [...history].sort((a, b) => a.number - b.number);
   const last = sorted[sorted.length - 1];
   const lastSecs = last.rehearsalSeconds;
+  const peakSecs = demonstratedPeak(sorted);
 
   // Manual shake-up takes priority
   if (forceShakeUp) {
@@ -355,7 +441,59 @@ function computeNextRehearsal(history, opts = {}) {
     };
   }
 
-  // Bad (rated 4): step back firmly
+  // Verify-peak scenario: last session was Fair/Bad strictly *below* the
+  // demonstrated peak, and the user hasn't yet marked it as a regression.
+  // The algorithm can't tell from one data point whether this is a fluke
+  // or a real loss of capacity, so the default is to re-attempt the peak
+  // (Option 2 — DP unchanged), with the recalibration alternative (Option
+  // 1 — step back from the failed length, drop DP) returned alongside so
+  // the Setup screen can offer the choice.
+  const isBelowPeakFailure =
+    (last.rating === 3 || last.rating === 4) &&
+    peakSecs > 0 &&
+    last.rehearsalSeconds < peakSecs &&
+    last.interpretedAs !== 'regression';
+
+  if (isBelowPeakFailure) {
+    const altSeconds = last.rating === 4
+      ? Math.max(60, roundDuration(lastSecs * 0.6))
+      : Math.max(60, lastSecs); // Fair: repeat
+    const altKind = last.rating === 4 ? 'step-back' : 'repeat';
+    const altReason = last.rating === 4
+      ? 'Step back from this length and recalibrate.'
+      : 'Repeat this length and recalibrate.';
+    // Peak if the user picks Option 1 (recalibrate). Same calculation
+    // demonstratedPeak would do once the last session is marked as a
+    // regression — pre-computed here so the Setup UI can preview the
+    // effect ("Your peak lowers to X").
+    const altNewPeak = (() => {
+      let p = 0;
+      for (let i = 0; i < sorted.length - 1; i++) {
+        const t = sorted[i];
+        if ((t.rating === 1 || t.rating === 2)
+            && t.rehearsalSeconds < lastSecs
+            && t.rehearsalSeconds > p) {
+          p = t.rehearsalSeconds;
+        }
+      }
+      return p;
+    })();
+    return {
+      seconds: peakSecs,
+      reason: `Last session was below your best — try ${formatTime(peakSecs)} again.`,
+      kind: 'verify-peak',
+      currentPeak: peakSecs,
+      alternative: {
+        seconds: altSeconds,
+        reason: altReason,
+        kind: altKind,
+        newPeak: altNewPeak,
+      },
+    };
+  }
+
+  // Bad (rated 4): step back firmly. Reaches here only when failed
+  // session was at-or-above DP, or there's no DP yet.
   if (last.rating === 4) {
     return {
       seconds: Math.max(60, roundDuration(lastSecs * 0.6)),
@@ -363,7 +501,7 @@ function computeNextRehearsal(history, opts = {}) {
       kind: 'step-back',
     };
   }
-  // Fair (rated 3): repeat the same length until it goes better
+  // Fair (rated 3): repeat the same length until it goes better.
   if (last.rating === 3) {
     return {
       seconds: lastSecs,
@@ -372,8 +510,8 @@ function computeNextRehearsal(history, opts = {}) {
     };
   }
 
-  // Auto shake-up: if last 3 sessions all acceptable (1/2/unrated) AND all increasing,
-  // throw in a shorter one for unpredictability.
+  // Auto shake-up: if last 3 sessions all acceptable (1/2/unrated) AND all
+  // increasing, throw in a shorter one for unpredictability.
   if (sorted.length >= 4) {
     const r3 = sorted.slice(-3);
     const allIncreasing =
@@ -390,83 +528,24 @@ function computeNextRehearsal(history, opts = {}) {
     }
   }
 
-  // Otherwise, a graduated increment by rating + magnitude.
-  //
-  // If the last session was a shake-up (shorter than what preceded it, and
-  // that predecessor was acceptable — i.e. not a Bad-triggered step-back),
-  // resume building from the *pre-shake-up peak* rather than the shake-up
-  // duration itself. Otherwise each shake-up would erase the progress it was
-  // meant to just playfully interrupt.
-  //
-  // The peak window is bounded two ways so we don't un-do a therapeutic
-  // step-back: (a) it starts AFTER the most recent Bad rating, and (b) it
-  // looks at the last 5 sessions max.
-  let basis = lastSecs;
-  let recoveredFromShakeUp = false;
-  if (sorted.length >= 2) {
-    const prev = sorted[sorted.length - 2];
-    const isPostShakeUp =
-      isAcceptable(prev.rating) && lastSecs < prev.rehearsalSeconds;
-    if (isPostShakeUp) {
-      let lastBadIdx = -1;
-      for (let i = sorted.length - 1; i >= 0; i--) {
-        if (sorted[i].rating === 4) { lastBadIdx = i; break; }
-      }
-      const windowStart = Math.max(lastBadIdx + 1, sorted.length - 5);
-      const windowPeak = sorted
-        .slice(windowStart)
-        .filter(s => isAcceptable(s.rating))
-        .reduce((m, s) => Math.max(m, s.rehearsalSeconds), 0);
-      if (windowPeak > basis) {
-        basis = windowPeak;
-        recoveredFromShakeUp = true;
-      }
-    }
-  }
-
-  let increment;
-  if (last.rating === 1) {
-    // Great: moderate bump. Steps grow with magnitude so progress doesn't
-    // feel artificially slow once the dog is comfortable with longer
-    // sessions — past 40 min we assume a solid foundation and bump harder.
-    if (basis < 300) increment = 30;          // <5min   → +30s
-    else if (basis < 600) increment = 60;     // <10min  → +1m
-    else if (basis < 1200) increment = 120;   // <20min  → +2m
-    else if (basis < 1800) increment = 180;   // <30min  → +3m
-    else if (basis < 2400) increment = 300;   // <40min  → +5m
-    else if (basis < 3600) increment = 480;   // <60min  → +8m
-    else increment = 600;                     // ≥60min  → +10m
-  } else if (last.rating === 2) {
-    // Good: small bump. Same shape as Great, scaled down.
-    if (basis < 300) increment = 15;          // <5min   → +15s
-    else if (basis < 600) increment = 30;     // <10min  → +30s
-    else if (basis < 1200) increment = 60;    // <20min  → +1m
-    else if (basis < 1800) increment = 90;    // <30min  → +1.5m
-    else if (basis < 2400) increment = 120;   // <40min  → +2m
-    else if (basis < 3600) increment = 180;   // <60min  → +3m
-    else increment = 240;                     // ≥60min  → +4m
-  } else {
-    // Unrated (seed data): conservative default
-    if (basis < 600) increment = 30;
-    else if (basis < 1200) increment = 60;
-    else if (basis < 2400) increment = 120;
-    else increment = 240;
-  }
+  // Step-up branch (last is Great/Good or unrated). Use DP as the basis
+  // when DP exceeds the most recent session — the dog has already
+  // demonstrated longer, so a shorter most-recent session shouldn't reset
+  // progression. Otherwise (no DP, or last >= DP), step from the most
+  // recent session.
+  const usedPeakBasis = peakSecs > lastSecs;
+  const basis = usedPeakBasis ? peakSecs : lastSecs;
+  const increment = stepUpIncrement(basis, last.rating);
 
   // Scale by growth intensity, then quantise to 15s so durations stay "clean".
   const scaled = Math.max(15, Math.round((increment * growthMult) / 15) * 15);
 
   const ratingLabel = last.rating === 1 ? 'Great' : last.rating === 2 ? 'Good' : null;
-  let reason;
-  if (recoveredFromShakeUp) {
-    reason = ratingLabel
-      ? `Back to pre-shake-up pace after ${ratingLabel}.`
-      : 'Back to pre-shake-up pace.';
-  } else {
-    reason = ratingLabel ? `Small step up after ${ratingLabel}.` : 'Small step up.';
-  }
+  const reason = usedPeakBasis
+    ? `Stepping up from your best (${formatTime(peakSecs)}).`
+    : (ratingLabel ? `Small step up after ${ratingLabel}.` : 'Small step up.');
 
-  return { seconds: basis + scaled, reason, kind: 'step-up' };
+  return { seconds: Math.max(60, basis + scaled), reason, kind: 'step-up' };
 }
 
 /* ---- Goal heuristics ----
@@ -1227,11 +1306,12 @@ function CalendarView({ history, onBack }) {
    HOME
    ===================================================================== */
 const HOME_KIND_META = {
-  'step-up':   { Icon: TrendingUp,   label: 'step up',          color: 'var(--sage)' },
-  'step-back': { Icon: TrendingDown, label: 'step back',        color: 'var(--amber)' },
-  'shake-up':  { Icon: Shuffle,      label: 'shake-up',         color: 'var(--gold)' },
-  'repeat':    { Icon: RotateCcw,    label: 'repeat',           color: 'var(--amber)' },
-  'fresh':     { Icon: Play,         label: 'first session',    color: 'var(--ink-muted)' },
+  'step-up':     { Icon: TrendingUp,   label: 'step up',         color: 'var(--sage)' },
+  'step-back':   { Icon: TrendingDown, label: 'step back',       color: 'var(--amber)' },
+  'shake-up':    { Icon: Shuffle,      label: 'shake-up',        color: 'var(--gold)' },
+  'repeat':      { Icon: RotateCcw,    label: 'repeat',          color: 'var(--amber)' },
+  'verify-peak': { Icon: Target,       label: 'verify best',     color: 'var(--clay)' },
+  'fresh':       { Icon: Play,         label: 'first session',   color: 'var(--ink-muted)' },
 };
 
 // Speed presets exposed via the dev tool below the chart on the home tile.
@@ -1436,9 +1516,29 @@ function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSecon
 function Setup({ nextNumber, suggestion, onBack, onStart, shakeUpSuggestion }) {
   const [goalStr, setGoalStr] = useState(formatTime(suggestion.seconds));
   const [currentSuggestion, setCurrentSuggestion] = useState(suggestion);
-  const [warmUps, setWarmUps] = useState(() => generateWarmUps());
+  const [warmUps, setWarmUps] = useState(() => generateWarmUps(undefined, suggestion.seconds));
   const [notes, setNotes] = useState('');
   const [editingIdx, setEditingIdx] = useState(null);
+  // Tracks whether the user has chosen the "recalibrate" branch on the
+  // verify-peak dialog. When true, starting the session will mark the
+  // prior failed session as a regression (which lowers DP).
+  const [recalibrate, setRecalibrate] = useState(false);
+  const isVerifyPeak = suggestion.kind === 'verify-peak' && suggestion.alternative;
+
+  const choosePeakOption = () => {
+    setGoalStr(formatTime(suggestion.seconds));
+    setCurrentSuggestion(suggestion);
+    setRecalibrate(false);
+  };
+  const chooseRecalibrateOption = () => {
+    setGoalStr(formatTime(suggestion.alternative.seconds));
+    setCurrentSuggestion({
+      seconds: suggestion.alternative.seconds,
+      reason: suggestion.alternative.reason,
+      kind: suggestion.alternative.kind,
+    });
+    setRecalibrate(true);
+  };
 
   const goalSeconds = parseMMSS(goalStr);
   const goalValid = goalSeconds !== null && goalSeconds > 0;
@@ -1451,18 +1551,17 @@ function Setup({ nextNumber, suggestion, onBack, onStart, shakeUpSuggestion }) {
   const addWarmUp = () => setWarmUps(w => (w.length >= WARMUP_MAX ? w : [...w, 0]));
 
   // Resize the warm-up list to exactly `n`. Truncates from the tail when
-  // shrinking; appends randomized values when growing.
+  // shrinking; appends randomized values (sized to current rehearsal length)
+  // when growing.
   const setWarmUpCount = (n) => {
     const target = Math.max(WARMUP_MIN, Math.min(WARMUP_MAX, n));
+    const sizeRef = goalSeconds || suggestion.seconds;
     setWarmUps(prev => {
       if (prev.length === target) return prev;
       if (prev.length > target) return prev.slice(0, target);
-      const shortVals = [5, 10, 15, 20];
-      const longVals = [25, 30, 35, 40, 45, 50, 55];
       const next = [...prev];
       while (next.length < target) {
-        const pool = Math.random() < 0.4 ? shortVals : longVals;
-        next.push(pool[Math.floor(Math.random() * pool.length)]);
+        next.push(pickWarmUpValue(sizeRef));
       }
       return next;
     });
@@ -1470,11 +1569,12 @@ function Setup({ nextNumber, suggestion, onBack, onStart, shakeUpSuggestion }) {
 
   // Icon + accent color for suggestion kind
   const kindMeta = {
-    'step-up':   { Icon: TrendingUp,   color: 'var(--sage)' },
-    'step-back': { Icon: TrendingDown, color: 'var(--amber)' },
-    'shake-up':  { Icon: Shuffle,      color: 'var(--gold)' },
-    'repeat':    { Icon: RotateCcw,    color: 'var(--amber)' },
-    'fresh':     { Icon: Play,         color: 'var(--ink-muted)' },
+    'step-up':     { Icon: TrendingUp,   color: 'var(--sage)' },
+    'step-back':   { Icon: TrendingDown, color: 'var(--amber)' },
+    'shake-up':    { Icon: Shuffle,      color: 'var(--gold)' },
+    'repeat':      { Icon: RotateCcw,    color: 'var(--amber)' },
+    'verify-peak': { Icon: Target,       color: 'var(--clay)' },
+    'fresh':       { Icon: Play,         color: 'var(--ink-muted)' },
   }[currentSuggestion.kind] || { Icon: TrendingUp, color: 'var(--ink-muted)' };
   const { Icon: KindIcon, color: kindColor } = kindMeta;
 
@@ -1491,6 +1591,58 @@ function Setup({ nextNumber, suggestion, onBack, onStart, shakeUpSuggestion }) {
         left={<button onClick={onBack} className="btn-ghost p-2"><ChevronLeft size={22} /></button>}
       />
       <div className="flex-1 min-h-0 px-6 pb-24 overflow-y-auto">
+        {isVerifyPeak && (
+          <div className="mb-6">
+            <div className="text-xs tracking-widest uppercase mb-2" style={{ color: 'var(--clay)', fontWeight: 500 }}>
+              Below your best
+            </div>
+            <div className="text-sm leading-snug mb-3" style={{ color: 'var(--ink)' }}>
+              Last session was below your best session ({formatTime(suggestion.currentPeak)}). How should we calculate this one?
+            </div>
+            <div className="space-y-2">
+              <button
+                onClick={choosePeakOption}
+                className="card w-full text-left p-3 transition-all"
+                style={{
+                  borderColor: !recalibrate ? 'var(--clay)' : 'var(--line)',
+                  borderWidth: !recalibrate ? 2 : 1,
+                  padding: !recalibrate ? '11px' : '12px',
+                }}
+                aria-pressed={!recalibrate}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <Target size={14} style={{ color: 'var(--clay)' }} />
+                  <span className="text-sm" style={{ color: 'var(--ink)', fontWeight: 500 }}>
+                    Try your best again — {formatTime(suggestion.seconds)}
+                  </span>
+                </div>
+                <div className="text-xs leading-snug" style={{ color: 'var(--ink-soft)' }}>
+                  Treats it as an off day. Your best stays at {formatTime(suggestion.currentPeak)}.
+                </div>
+              </button>
+              <button
+                onClick={chooseRecalibrateOption}
+                className="card w-full text-left p-3 transition-all"
+                style={{
+                  borderColor: recalibrate ? 'var(--clay)' : 'var(--line)',
+                  borderWidth: recalibrate ? 2 : 1,
+                  padding: recalibrate ? '11px' : '12px',
+                }}
+                aria-pressed={recalibrate}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <TrendingDown size={14} style={{ color: 'var(--amber)' }} />
+                  <span className="text-sm" style={{ color: 'var(--ink)', fontWeight: 500 }}>
+                    Step back — {formatTime(suggestion.alternative.seconds)}
+                  </span>
+                </div>
+                <div className="text-xs leading-snug" style={{ color: 'var(--ink-soft)' }}>
+                  Treats it as a real change in capacity. Your best lowers to {suggestion.alternative.newPeak > 0 ? formatTime(suggestion.alternative.newPeak) : 'none'}.
+                </div>
+              </button>
+            </div>
+          </div>
+        )}
         <div className="mb-8">
           <div className="text-xs tracking-widest uppercase mb-3" style={{ color: 'var(--ink-muted)' }}>Rehearsal goal</div>
           <input
@@ -1500,12 +1652,14 @@ function Setup({ nextNumber, suggestion, onBack, onStart, shakeUpSuggestion }) {
             className="input-text serif tabular text-5xl py-3 px-4 rounded-xl w-full"
             style={{ fontWeight: 500 }}
           />
-          <div className="flex items-start gap-1.5 mt-2">
-            <KindIcon size={12} style={{ color: kindColor, marginTop: 3, flexShrink: 0 }} />
-            <div className="text-xs" style={{ color: 'var(--ink-soft)' }}>
-              <span>Suggested <span className="tabular mono">{formatTime(currentSuggestion.seconds)}</span> — <span className="serif italic">{currentSuggestion.reason}</span></span>
+          {!isVerifyPeak && (
+            <div className="flex items-start gap-1.5 mt-2">
+              <KindIcon size={12} style={{ color: kindColor, marginTop: 3, flexShrink: 0 }} />
+              <div className="text-xs" style={{ color: 'var(--ink-soft)' }}>
+                <span>Suggested <span className="tabular mono">{formatTime(currentSuggestion.seconds)}</span> — <span className="serif italic">{currentSuggestion.reason}</span></span>
+              </div>
             </div>
-          </div>
+          )}
           {currentSuggestion.kind !== 'shake-up' && shakeUpSuggestion && (
             <button
               onClick={applyShakeUp}
@@ -1531,7 +1685,7 @@ function Setup({ nextNumber, suggestion, onBack, onStart, shakeUpSuggestion }) {
                 ))}
               </select>
             </label>
-            <button onClick={() => setWarmUps(generateWarmUps(warmUps.length))} className="btn-ghost text-xs flex items-center gap-1.5 py-1">
+            <button onClick={() => setWarmUps(generateWarmUps(warmUps.length, goalSeconds || suggestion.seconds))} className="btn-ghost text-xs flex items-center gap-1.5 py-1">
               <Shuffle size={14} /> Shuffle
             </button>
           </div>
@@ -1580,7 +1734,7 @@ function Setup({ nextNumber, suggestion, onBack, onStart, shakeUpSuggestion }) {
       <div className="px-6 pb-6 pt-4" style={{ background: 'linear-gradient(to top, var(--bg) 70%, transparent)' }}>
         <button
           disabled={!goalValid || warmUps.length === 0}
-          onClick={() => onStart({ number: nextNumber, warmUps, rehearsalSeconds: goalSeconds, notes })}
+          onClick={() => onStart({ number: nextNumber, warmUps, rehearsalSeconds: goalSeconds, notes, interpretLastAsRegression: recalibrate })}
           className="btn-primary w-full py-4 rounded-full text-base"
         >
           Begin session
@@ -2037,7 +2191,7 @@ function EditSession({ session, isNew = false, onBack, onSave, onDelete, askConf
 /* =====================================================================
    GOAL CARD
    ===================================================================== */
-function GoalCard({ goalSeconds, onChange, askConfirm }) {
+function GoalCard({ goalSeconds, onChange, askConfirm, label = 'Rehearsal goal', icon: Icon = Target }) {
   const [editing, setEditing] = useState(false);
   const initialH = Math.floor(goalSeconds / 3600);
   const initialM = Math.floor((goalSeconds % 3600) / 60);
@@ -2074,10 +2228,10 @@ function GoalCard({ goalSeconds, onChange, askConfirm }) {
 
   return (
     <div className="card p-4 mb-3 flex items-center gap-3">
-      <Target size={20} style={{ color: 'var(--clay)' }} />
+      <Icon size={20} style={{ color: 'var(--clay)' }} />
       <div className="flex-1 min-w-0">
         <div className="text-xs tracking-widest uppercase mb-1" style={{ color: 'var(--ink-muted)' }}>
-          Rehearsal goal
+          {label}
         </div>
         {editing ? (
           <div className="flex items-baseline gap-1 flex-wrap">
@@ -2144,11 +2298,12 @@ const CHART_RANGES = [
 ];
 
 const KIND_LABEL = {
-  'step-up':   'step up',
-  'step-back': 'step back',
-  'shake-up':  'shake-up',
-  'repeat':    'repeat',
-  'fresh':     'start',
+  'step-up':     'step up',
+  'step-back':   'step back',
+  'shake-up':    'shake-up',
+  'repeat':      'repeat',
+  'verify-peak': 'verify best',
+  'fresh':       'start',
 };
 
 /**
@@ -2916,6 +3071,7 @@ function AlgorithmInspector({ history, growthIntensity, goalSeconds, onBack }) {
     notes: '',
     rehearsalSeconds: s.rehearsalSeconds,
     rating: s.rating,
+    ...(s.interpretedAs ? { interpretedAs: s.interpretedAs } : {}),
   }));
 
   const peak = scratch.length > 0 ? demonstratedPeak(fullScratch) : 0;
@@ -2947,7 +3103,9 @@ function AlgorithmInspector({ history, growthIntensity, goalSeconds, onBack }) {
     k === 'shake-up' ? 'var(--clay)'
     : k === 'step-back' ? 'var(--brick)'
     : k === 'repeat' ? 'var(--amber)'
+    : k === 'verify-peak' ? 'var(--clay)'
     : 'var(--ink-muted)';
+  const kindText = (k) => KIND_LABEL[k] || k;
 
   return (
     <div className="fade-up flex flex-col flex-1 min-h-0">
@@ -2960,7 +3118,7 @@ function AlgorithmInspector({ history, growthIntensity, goalSeconds, onBack }) {
         <div className="card p-4 mb-3">
           <div className="text-xs tracking-widest uppercase mb-2" style={{ color: 'var(--ink-muted)' }}>State</div>
           <div className="text-sm flex items-baseline gap-2 flex-wrap" style={{ color: 'var(--ink)' }}>
-            <span style={{ color: 'var(--ink-muted)' }}>Peak</span>
+            <span style={{ color: 'var(--ink-muted)' }}>Best</span>
             <span className="serif tabular">{peak > 0 ? formatTime(peak) : '—'}</span>
             {peakSession && (
               <span className="text-xs italic" style={{ color: 'var(--ink-soft)' }}>
@@ -2987,12 +3145,29 @@ function AlgorithmInspector({ history, growthIntensity, goalSeconds, onBack }) {
               {formatTime(next.seconds)}
             </div>
             <div className="text-xs uppercase tracking-widest" style={{ color: kindColor(next.kind), fontWeight: 500 }}>
-              {next.kind}
+              {kindText(next.kind)}
             </div>
           </div>
           <div className="text-xs italic mt-2 leading-snug" style={{ color: 'var(--ink-soft)' }}>
             {next.reason}
           </div>
+          {next.alternative && (
+            <div className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--line)' }}>
+              <div className="text-xs tracking-widest uppercase mb-1" style={{ color: 'var(--ink-muted)' }}>
+                Alternative (recalibrate)
+              </div>
+              <div className="flex items-baseline gap-2">
+                <span className="serif tabular text-base" style={{ color: 'var(--ink)' }}>{formatTime(next.alternative.seconds)}</span>
+                <span className="text-xs uppercase tracking-wider" style={{ color: kindColor(next.alternative.kind), fontWeight: 500 }}>
+                  {kindText(next.alternative.kind)}
+                </span>
+                <span className="text-xs" style={{ color: 'var(--ink-muted)' }}>
+                  → best {next.alternative.newPeak > 0 ? formatTime(next.alternative.newPeak) : 'none'}
+                </span>
+              </div>
+              <div className="text-xs italic mt-1 leading-snug" style={{ color: 'var(--ink-soft)' }}>{next.alternative.reason}</div>
+            </div>
+          )}
         </div>
 
         {/* Projection */}
@@ -3010,7 +3185,7 @@ function AlgorithmInspector({ history, growthIntensity, goalSeconds, onBack }) {
                     <span className="tabular" style={{ color: 'var(--ink-muted)', minWidth: 24 }}>#{p.number}</span>
                     <span className="serif tabular" style={{ color: 'var(--ink)', minWidth: 50 }}>{formatTime(p.seconds)}</span>
                     <span className="uppercase tracking-wider" style={{ color: kindColor(p.kind), fontSize: 9, fontWeight: 500 }}>
-                      {p.kind}
+                      {kindText(p.kind)}
                     </span>
                   </div>
                   <div className="italic mt-0.5 ml-7" style={{ color: 'var(--ink-soft)' }}>{p.reason}</div>
@@ -3084,33 +3259,52 @@ function ScratchRow({ index, row, onUpdate, onRemove }) {
     }
   };
 
+  const isFairOrBad = row.rating === 3 || row.rating === 4;
+  const isRegression = row.interpretedAs === 'regression';
+
   return (
-    <div className="flex items-center gap-2 mb-1.5">
-      <span className="text-xs tabular" style={{ color: 'var(--ink-muted)', minWidth: 22 }}>#{index + 1}</span>
-      <input
-        type="text"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
-        className="input-text px-2 py-1.5 rounded text-sm tabular"
-        style={{ width: 64 }}
-        inputMode="numeric"
-      />
-      <select
-        value={row.rating ?? ''}
-        onChange={(e) => onUpdate({ rating: e.target.value === '' ? null : Number(e.target.value) })}
-        className="input-text px-2 py-1.5 rounded text-sm flex-1"
-      >
-        <option value="">Unrated</option>
-        <option value="1">Great</option>
-        <option value="2">Good</option>
-        <option value="3">Fair</option>
-        <option value="4">Bad</option>
-      </select>
-      <button onClick={onRemove} className="btn-ghost p-1.5" aria-label="Remove">
-        <X size={14} />
-      </button>
+    <div className="mb-1.5">
+      <div className="flex items-center gap-2">
+        <span className="text-xs tabular" style={{ color: 'var(--ink-muted)', minWidth: 22 }}>#{index + 1}</span>
+        <input
+          type="text"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
+          className="input-text px-2 py-1.5 rounded text-sm tabular"
+          style={{ width: 64 }}
+          inputMode="numeric"
+        />
+        <select
+          value={row.rating ?? ''}
+          onChange={(e) => onUpdate({ rating: e.target.value === '' ? null : Number(e.target.value) })}
+          className="input-text px-2 py-1.5 rounded text-sm flex-1"
+        >
+          <option value="">Unrated</option>
+          <option value="1">Great</option>
+          <option value="2">Good</option>
+          <option value="3">Fair</option>
+          <option value="4">Bad</option>
+        </select>
+        <button onClick={onRemove} className="btn-ghost p-1.5" aria-label="Remove">
+          <X size={14} />
+        </button>
+      </div>
+      {isFairOrBad && (
+        <button
+          onClick={() => onUpdate({ interpretedAs: isRegression ? undefined : 'regression' })}
+          className="ml-7 mt-1 text-xs px-2 py-0.5 rounded-full transition-all"
+          style={{
+            color: isRegression ? 'var(--clay)' : 'var(--ink-muted)',
+            border: `1px solid ${isRegression ? 'var(--clay)' : 'var(--line)'}`,
+            fontWeight: isRegression ? 500 : 400,
+          }}
+          aria-pressed={isRegression}
+        >
+          {isRegression ? '✓ marked as regression' : 'mark as regression'}
+        </button>
+      )}
     </div>
   );
 }
@@ -3205,7 +3399,7 @@ function TestProfilesView({ onLoadProfile, chartAnimSpeed, onChartAnimSpeedChang
               Algorithm inspector
             </div>
             <div className="text-xs mt-0.5 leading-snug" style={{ color: 'var(--ink-muted)' }}>
-              See peak, next session, and the next 10 projected — edit a scratch history to test scenarios.
+              See your best, next session, and the next 10 projected — edit a scratch history to test scenarios.
             </div>
           </div>
           <ChevronRight size={16} style={{ color: 'var(--ink-muted)', flexShrink: 0, marginLeft: 12 }} />
@@ -3218,8 +3412,12 @@ function TestProfilesView({ onLoadProfile, chartAnimSpeed, onChartAnimSpeedChang
 /* =====================================================================
    ONBOARDING
    ===================================================================== */
-function Onboarding({ onClose, goalSeconds, onChangeGoal, askConfirm }) {
+function Onboarding({ onClose, goalSeconds, onChangeGoal, askConfirm, showInitialBest = false }) {
   const [step, setStep] = useState(0);
+  // Captured on the goal step when the user is doing first-run onboarding
+  // (no history yet). Becomes a synthetic Great-rated session #1 on close so
+  // the algorithm has a starting demonstrated best to build from.
+  const [initialBestSeconds, setInitialBestSeconds] = useState(60);
 
   const isStandalone =
     window.matchMedia('(display-mode: standalone)').matches ||
@@ -3248,9 +3446,12 @@ function Onboarding({ onClose, goalSeconds, onChangeGoal, askConfirm }) {
     },
     {
       key: 'goal',
-      title: 'Pick a duration to build toward.',
-      body:
-        "Your goal is how long you ultimately want your dog to be okay alone — an hour is a good starting target. You can change this any time from the History screen. Tap the i in the top corner of the home screen anytime to revisit this guide.",
+      title: showInitialBest
+        ? 'Where you are, and where you want to go.'
+        : 'Pick a duration to build toward.',
+      body: showInitialBest
+        ? "Two numbers shape your sessions: how long your dog can already stay home calmly today, and how long you ultimately want them to be okay alone. An hour is a good starting goal. You can change either anytime — tap the i in the top corner of the home screen to revisit this guide."
+        : "Your goal is how long you ultimately want your dog to be okay alone — an hour is a good starting target. You can change this any time from the History screen. Tap the i in the top corner of the home screen anytime to revisit this guide.",
     },
   ];
 
@@ -3269,7 +3470,11 @@ function Onboarding({ onClose, goalSeconds, onChangeGoal, askConfirm }) {
   const isLast = step === screens.length - 1;
   const isFirst = step === 0;
   const screen = screens[step];
-  const next = () => (isLast ? onClose() : setStep(step + 1));
+  const next = () => (
+    isLast
+      ? onClose(showInitialBest ? initialBestSeconds : 0)
+      : setStep(step + 1)
+  );
   const back = () => { if (!isFirst) setStep(step - 1); };
 
   return (
@@ -3377,6 +3582,15 @@ function Onboarding({ onClose, goalSeconds, onChangeGoal, askConfirm }) {
           )}
           {screen.key === 'goal' && (
             <div className="mt-6">
+              {showInitialBest && (
+                <GoalCard
+                  goalSeconds={initialBestSeconds}
+                  onChange={setInitialBestSeconds}
+                  askConfirm={askConfirm}
+                  label="Current best"
+                  icon={TrendingUp}
+                />
+              )}
               <GoalCard
                 goalSeconds={goalSeconds}
                 onChange={onChangeGoal}
@@ -3525,7 +3739,23 @@ export default function App() {
     setLoaded(true);
   }, []);
 
-  const dismissOnboarding = () => {
+  const dismissOnboarding = (initialBestSeconds = 0) => {
+    // First-run only: seed a synthetic Great-rated session #1 with the
+    // user's reported "current best" so the algorithm has a starting
+    // demonstrated best to build from. Skipped if the user has any
+    // history already (re-opened onboarding via the i icon).
+    if (initialBestSeconds > 0 && (history?.length || 0) === 0) {
+      const baseline = {
+        number: 1,
+        date: ymdLocal(new Date()),
+        warmUps: [],
+        rehearsalSeconds: initialBestSeconds,
+        notes: 'Starting baseline',
+        rating: 1,
+      };
+      setHistory([baseline]);
+      storageSetWithBackup('history', [baseline]);
+    }
     storageSet('onboardingDismissed', true);
     setView('home');
   };
@@ -3613,6 +3843,19 @@ export default function App() {
   const handleStartSetup = () => setView('setup');
 
   const handleBeginSession = (draft) => {
+    // If the user picked "recalibrate" on the verify-peak dialog, mark
+    // the prior failed session as a regression. demonstratedPeak() reads
+    // this flag and lowers DP accordingly. Done here (on Start) rather
+    // than the moment the user taps the option, so backing out of Setup
+    // before starting doesn't accidentally lower DP.
+    if (draft.interpretLastAsRegression && history.length > 0) {
+      const sortedHist = [...history].sort((a, b) => a.number - b.number);
+      const lastIdx = sortedHist.length - 1;
+      const updatedLast = { ...sortedHist[lastIdx], interpretedAs: 'regression' };
+      const updatedHistory = [...sortedHist.slice(0, lastIdx), updatedLast];
+      setHistory(updatedHistory);
+      storageSetWithBackup('history', updatedHistory);
+    }
     const phases = buildPhases(draft.warmUps, draft.rehearsalSeconds);
     const session = {
       number: draft.number,
@@ -3781,6 +4024,7 @@ export default function App() {
       warmUps: updated.warmUps,
       notes: updated.notes,
       rating: updated.rating ?? null,
+      ...(updated.interpretedAs ? { interpretedAs: updated.interpretedAs } : {}),
     };
     let newHistory;
     if (editTarget.isNew) {
@@ -3858,6 +4102,7 @@ export default function App() {
             goalSeconds={goalSeconds}
             onChangeGoal={handleChangeGoal}
             askConfirm={askConfirm}
+            showInitialBest={(history?.length || 0) === 0}
           />
         ) : view === 'home' ? (
           <Home
