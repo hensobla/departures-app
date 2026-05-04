@@ -8,6 +8,7 @@ import {
   Bell, BellOff, Gauge, Calendar as CalendarIcon,
   Sun, Moon, Monitor
 } from 'lucide-react';
+import tipsCsv from './tips.csv?raw';
 
 /* =====================================================================
    SEED DATA — 17 sessions (1-16 from spreadsheet 1/19–3/6, 17 from app)
@@ -41,6 +42,59 @@ const DEFAULT_GOAL_SECONDS = 3600; // 1 hour
 // or system notifications fire — the underlying code paths stay in place
 // and the persisted user preference is preserved for when we flip this on.
 const NOTIFICATIONS_FEATURE_ENABLED = false;
+
+/* =====================================================================
+   SESSION TIPS — short prompts shown during a running session. The
+   library lives in `src/tips.csv` so it can be edited in any spreadsheet
+   app (Numbers, Excel, Google Sheets) without touching code. The CSV is
+   imported as a raw string at build time and parsed once on load.
+   Two columns: `category`, `text`. The header row is required. Rotation
+   advances on each phase change; the order is shuffled fresh per session
+   so the sequence varies, and a tip won't repeat until the library wraps.
+   ===================================================================== */
+function parseTipsCsv(input) {
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let inQuotes = false;
+  const text = String(input || '');
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+      else if (c === '"') { inQuotes = false; }
+      else { cell += c; }
+      continue;
+    }
+    if (c === '"') { inQuotes = true; continue; }
+    if (c === ',') { row.push(cell); cell = ''; continue; }
+    if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      row.push(cell); cell = '';
+      if (row.some(v => v !== '')) rows.push(row);
+      row = [];
+      continue;
+    }
+    cell += c;
+  }
+  if (cell !== '' || row.length > 0) { row.push(cell); if (row.some(v => v !== '')) rows.push(row); }
+  // Drop the header row if present.
+  if (rows.length && rows[0][0]?.trim().toLowerCase() === 'category') rows.shift();
+  return rows
+    .map(([category, t]) => ({ category: (category ?? '').trim(), text: (t ?? '').trim() }))
+    .filter(r => r.text !== '');
+}
+
+const TIPS = parseTipsCsv(tipsCsv);
+
+function shuffledTips() {
+  const arr = TIPS.slice();
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
 
 /* =====================================================================
    TEST PROFILES — swappable preset histories for development/testing.
@@ -1528,6 +1582,18 @@ function Setup({ nextNumber, suggestion, onBack, onStart, shakeUpSuggestion }) {
 function SessionView({ session, soundEnabled, toggleSound, volume = 100, onUpdate, onAbort, onComplete, askConfirm }) {
   const [now, setNow] = useState(Date.now());
   useWakeLock(session.phaseState === 'running');
+
+  // Shuffled tip rotation. The queue is built once per SessionView mount
+  // (i.e. once per session) so the order varies session to session, and we
+  // step through it linearly so a tip doesn't repeat until the library wraps.
+  // If src/tips.csv is empty or unparseable, the queue is empty and the tip
+  // slot is omitted entirely.
+  const tipQueueRef = useRef(null);
+  if (tipQueueRef.current === null) tipQueueRef.current = shuffledTips();
+  const tipQueue = tipQueueRef.current;
+  const currentTip = tipQueue.length > 0
+    ? tipQueue[session.currentPhaseIndex % tipQueue.length]
+    : null;
   // Keep JS alive while a phase is running so phase-end notifications can
   // still fire when the user has switched to another app on iOS. Gated on
   // soundEnabled (the master notifications toggle) so users who don't want
@@ -1724,6 +1790,15 @@ function SessionView({ session, soundEnabled, toggleSound, volume = 100, onUpdat
           )}
         </div>
       </div>
+      {currentTip && (
+        <div
+          key={session.currentPhaseIndex}
+          className="fade-up px-8 pt-2 text-center"
+          style={{ color: 'var(--ink-muted)', fontSize: '12px', lineHeight: 1.5, maxWidth: '420px', alignSelf: 'center' }}
+        >
+          <span className="serif italic">{currentTip.text}</span>
+        </div>
+      )}
       <div className="px-6 pb-8 pt-4 flex items-center justify-center gap-1.5 flex-wrap">
         {session.phases.map((p, i) => (
           <div
