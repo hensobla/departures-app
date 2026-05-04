@@ -2133,10 +2133,6 @@ function ProgressionChart({
   const [chartRange, setChartRange] = useState('all');
   const animDuration = CHART_ANIM_DURATIONS[animationSpeed] ?? 0;
   const animationEnabled = animDuration > 0;
-  // The line stroke is intentionally drawn slower than the dot reveals
-  // (~15% longer) so the line "catches up to" each dot just after it lands.
-  // Reads as natural pencil-drawing rather than two animations racing.
-  const lineAnimDuration = Math.round(animDuration * 1.15);
 
   const ascending = [...history].sort((a, b) => a.number - b.number);
   let sliced;
@@ -2431,17 +2427,10 @@ function ProgressionChart({
               />
             )}
             {/* Projection first so history dots layer on top at the
-                bridge index. The line stroke uses Recharts' built-in
-                stroke-dashoffset draw animation (smooth left-to-right
-                over animDuration) while the dots fade in staggered via
-                their custom renderer. Both end at the same total time;
-                in between, the line draws continuously and the dots
-                pop in one by one — reads as natural rather than
-                mechanically locked to each segment. animKey on the
-                <Line> forces a remount on speed change so the stroke
-                animation restarts. */}
+                bridge index. The trend line is rendered statically (no
+                draw animation); only the dots animate, via the custom
+                renderers. */}
             <Line
-              key={`proj-${animKey}`}
               type="monotone"
               dataKey="projMinutes"
               stroke="var(--clay)"
@@ -2450,24 +2439,17 @@ function ProgressionChart({
               strokeDasharray="4 4"
               dot={renderProjDot}
               activeDot={{ r: compact ? 7 : 7, fill: 'var(--surface)', stroke: 'var(--clay)', strokeWidth: 1.75 }}
-              isAnimationActive={animationEnabled}
-              animationDuration={lineAnimDuration}
-              animationBegin={0}
-              animationEasing="linear"
+              isAnimationActive={false}
               connectNulls={false}
             />
             <Line
-              key={`hist-${animKey}`}
               type="monotone"
               dataKey="minutes"
               stroke="var(--clay)"
               strokeWidth={1.5}
               dot={renderHistoryDot}
               activeDot={{ r: compact ? 7 : 7, strokeWidth: 1.5 }}
-              isAnimationActive={animationEnabled}
-              animationDuration={lineAnimDuration}
-              animationBegin={0}
-              animationEasing="linear"
+              isAnimationActive={false}
               connectNulls={false}
             />
           </LineChart>
