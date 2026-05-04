@@ -46,14 +46,34 @@ src/
   App.jsx          ← everything: components, helpers, routing
   main.jsx         ← React mount + SW registration (prod-only)
   index.css        ← Tailwind layers + CSS custom properties (themes)
+  tips.numbers     ← SOURCE OF TRUTH for the in-session tips library
+  tips.csv         ← derived from tips.numbers; what the app reads
 public/
   sw.js            ← service worker
   manifest.webmanifest
   icon-*.png
+scripts/
+  tips-export.sh   ← exports tips.numbers → tips.csv via Numbers.app
 index.html         ← <meta theme-color> + pre-React paint bg
 ```
 
 `departure-timer.jsx` at repo root is an old standalone artifact — **ignore**.
+
+### The tips spreadsheet workflow
+
+`src/tips.numbers` is the source of truth for the rotating session tips.
+The user edits it directly in Numbers (two columns: `category`, `text`).
+Vite imports `src/tips.csv` via `?raw` at build time, so the .csv has to
+be regenerated whenever the .numbers file changes.
+
+`scripts/tips-export.sh` handles this. It runs automatically as the
+`predev` and `prebuild` npm hooks, and is a no-op when the .csv is already
+newer than the .numbers (so the dev cycle isn't slowed down). On non-macOS
+(CI) it skips silently and the build uses the committed .csv as-is.
+
+Manual invocation: `npm run tips:export`. Briefly drives Numbers.app via
+`osascript`. Both files must be committed — tips.numbers as the source,
+tips.csv so CI builds without needing Numbers.
 
 ---
 

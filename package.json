@@ -4,6 +4,9 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
+    "tips:export": "bash scripts/tips-export.sh",
+    "predev": "bash scripts/tips-export.sh",
+    "prebuild": "bash scripts/tips-export.sh",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
