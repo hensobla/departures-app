@@ -83,26 +83,27 @@ Search for these comment headers (`/* === SECTION === */`) to jump:
 
 | Section | Roughly | What's there |
 |---|---|---|
-| Top of file | 1–60 | Imports, `SEED_HISTORY` (the demo/onboarding dataset), `DEFAULT_GOAL_SECONDS = 3600`, **`NOTIFICATIONS_FEATURE_ENABLED = false`** flag |
-| TEST PROFILES | ~60–160 | `generateLotsOfData()` (logistic curve), `TEST_PROFILES` array (Lots / Demo / Empty) |
-| Misc helpers | ~160–400 | `formatTime`, `formatTimeLong`, `parseMMSS`, `ymdLocal`, `buildSessionDaySet`, `generateWarmUps`, `buildPhases`, `phaseCue`, rating utils |
-| Algorithm | ~400–500 | `computeNextRehearsal`, `simulateProjection`, `estimateSessionsToGoal`, `peakAcceptableSeconds`, `computeGoalProgress` |
-| Storage | ~500–600 | `storageGet/Set/Delete`, `storageSetWithBackup` (history.backup) |
-| Notifications | ~600–760 | `notificationsSupported`, `requestNotificationPermission`, `fireSystemNotification`, `firePhaseEndAlert` (chime + system notif) |
-| Audio + alarm | ~760–900 | `playAlarm`, `buildChimeWav`, `buildKeepaliveWav`, `useAudioKeepalive` (the iOS-PWA-stays-alive trick), `useWakeLock` |
-| Calendar bits | ~900–1100 | `DAY_ABBREVS_*`, `CheckDot`, `LastSevenDaysStrip`, `CalendarView` (full-month + swipe + Today button) |
-| `<Home>` | ~1100–1400 | The home screen. **Keep it terse — every change here goes through review.** |
-| `<Setup>` | ~1400–1600 | Pre-session screen (warm-up count picker, rehearsal duration, notes) |
-| `<SessionView>` | ~1600–1900 | Active session timer/phases. Includes `useAudioKeepalive`, `useWakeLock` integration |
-| `<Summary>` | ~1900–2050 | Post-session rating + notes screen |
-| `<EditSession>` | ~2050–2300 | Edit existing session record (number is read-only) |
-| `GoalCard` | ~2300–2400 | Hours+minutes goal editor (used in History + onboarding) |
-| `ProgressionChart` | ~2400–2600 | Recharts line chart used by Home (compact) and History (full). Has tab range selector + the dot-reveal animation when `animationSpeed` prop is set |
-| `<HistoryView>` | ~2600–2800 | Sessions list + chart + Add session button + Export/Import |
-| `<SettingsView>` | ~2800–3050 | Notifications card (gated on `NOTIFICATIONS_FEATURE_ENABLED`), Appearance (System/Light/Dark), Growth Intensity, Developer tools link |
-| `<TestProfilesView>` | ~3050–3150 | Settings → Developer tools sub-page. Warning banner, preset history loader, chart animation speed picker |
-| `<Onboarding>` | ~3150–3450 | 4–5 step intro flow with embedded GoalCard on the goal step |
-| `<App>` (root) | ~3450–end | View routing, all top-level state, persistence effects, all the `handle*` callbacks |
+| Top of file | 1–110 | Imports (incl. `tipsCsv` raw), `SEED_HISTORY`, `DEFAULT_GOAL_SECONDS = 3600`, **`NOTIFICATIONS_FEATURE_ENABLED = false`**, in-session tips library (`parseTipsCsv`, `TIPS`, `shuffledTips`) |
+| TEST PROFILES | ~110–205 | `generateLotsOfData()` (logistic curve), `TEST_PROFILES` array (Lots / Demo / Empty) |
+| Misc helpers | ~205–355 | Formatters (`formatTime`, `formatTimeLong`, `parseMMSS`, `formatDate`, `ymdLocal`), `buildSessionDaySet`, warm-up generation (`warmUpPools`, `pickWarmUpValue`, `generateWarmUps`), `buildPhases`, `phaseCue`, `roundDuration` |
+| Algorithm | ~355–650 | `demonstratedPeak`, `stepUpIncrement`, `computeNextRehearsal`, `simulateProjection`, `peakAcceptableSeconds`, `estimateSessionsToGoal`, `computeGoalProgress`, `estimateText` |
+| Storage | ~650–700 | `storageGet/Set/Delete`, `storageSetWithBackup` (history.backup) |
+| Notifications | ~700–760 | `notificationsSupported`, `requestNotificationPermission`, `fireSystemNotification`, `firePhaseEndAlert` |
+| Audio + alarm | ~750–960 | `playAlarm`, `buildChimeWav`, `buildKeepaliveWav`, `useAudioKeepalive` (iOS-PWA-stays-alive trick), `useWakeLock` |
+| Calendar bits | ~960–1310 | `RatingSelector`, `ConfirmDialog`, `TopBar`, `CheckDot`, `LastSevenDaysStrip`, `CalendarView` (full-month + swipe + Today) |
+| `<Home>` | ~1325–1515 | Home screen. Handles `verify-peak` kind tile + reason copy. **Keep it terse — every change here goes through review.** |
+| `<Setup>` | ~1516–1750 | Pre-session screen. Includes the **verify-best dialog cards** (two cards: "Try your best again" / "Step back") that fire when last session is Fair/Bad below DP. Picking step-back marks the prior session as a regression on Begin. |
+| `<SessionView>` | ~1750–1985 | Active session timer/phases. Includes session-tip rotation (advances per phase, shuffled per session), `useAudioKeepalive`, `useWakeLock` |
+| `<Summary>` | ~1985–2050 | Post-session rating + notes screen |
+| `<EditSession>` | ~2050–2195 | Edit existing session record. Preserves the optional `interpretedAs` field through saves. |
+| `GoalCard` | ~2194–2300 | Hours+minutes editor. **Parameterized** with `label` and `icon` props (defaults to "Rehearsal goal" + Target icon); used by History, Settings, and onboarding (twice on first run) |
+| `ProgressionChart` | ~2328–2685 | Recharts line chart, used by Home (compact) and History (full). Has tab range selector + dot-reveal animation. Knows about the `verify-peak` kind label. |
+| `<HistoryView>` | ~2688–2790 | Sessions list + chart + Add session button + Export/Import |
+| `<SettingsView>` | ~2820–3055 | Notifications (gated), Appearance (System/Light/Dark), Growth Intensity, Developer tools link |
+| `<AlgorithmInspector>` + `<ScratchRow>` | ~3060–3310 | Settings → Developer tools → Algorithm. Read-only inspector with state, next, projection, scratch-history editor, per-row regression toggle. Never touches localStorage. |
+| `<TestProfilesView>` | ~3312–3415 | Developer-tools landing page. Adds entry button to `<AlgorithmInspector>`. |
+| `<Onboarding>` | ~3415–3600 | 4–5 step intro. Goal step shows **dual cards on first run** (Current best + Rehearsal goal); single card when re-opened via i icon. |
+| `<App>` (root) | ~3600–end | View routing (incl. `view === 'inspector'`), all top-level state, persistence effects, `handle*` callbacks. `dismissOnboarding` accepts `initialBestSeconds` and seeds session #1 on first run. `handleBeginSession` mutates last session for regression marking when verify-best chooses Step back. |
 
 When adding new state, the convention is: state lives in `<App>`, wires down via props. Sub-components own only ephemeral UI state (which tab, hover, etc.).
 
@@ -144,28 +145,41 @@ Everything stored as JSON in `localStorage`. Keys:
   warmUps: number[],     // each entry is seconds-outside-the-door
   rehearsalSeconds: number,
   notes: string,
-  rating: 1 | 2 | 3 | 4 | null,  // 1=Great, 2=Good, 3=Fair, 4=Bad, null=unrated
+  rating: 1 | 2 | 3 | 4 | null,         // 1=Great, 2=Good, 3=Fair, 4=Bad, null=unrated
+  interpretedAs?: 'regression',          // optional: explicit user signal that drops DP
 }
 ```
 
 `isAcceptable(rating)` returns true for `null | 1 | 2`. `progressSessions` and `peakAcceptableSeconds` filter on this — Bad-rated sessions are intentionally excluded from the peak so a rough day doesn't drag down the goal-progress bar.
 
+`interpretedAs: 'regression'` is set by the verify-best dialog when the user picks "Step back" — it's the only way `demonstratedPeak()` lowers DP. Reversible by editing the session record (the field is preserved through `EditSession` saves).
+
 ---
 
-## Algorithm core (`computeNextRehearsal`)
+## Algorithm core
 
-Given history + opts, returns `{ seconds, reason, kind }`. Kinds:
+The dog's **demonstrated best (DP)** is the longest session he's rated Great or Good. `demonstratedPeak(sorted)` walks history forward, raising DP on each Great/Good and dropping it only when a session has `interpretedAs: 'regression'` set. Without that explicit marking, Fair/Bad ratings don't touch DP. (User-facing copy says "best" / "best session"; `demonstratedPeak` stays as the internal name for code clarity.)
+
+`computeNextRehearsal(history, opts)` returns `{ seconds, reason, kind, alternative?, currentPeak? }`. Kinds:
+
 - `'fresh'` — first session ever, suggests 5min
-- `'step-back'` — last rated 4 (Bad). Suggests 60% of last duration
-- `'repeat'` — last rated 3 (Fair). Same duration
-- `'step-up'` — happy path. Increments scale with magnitude (table in code). **Past 40 min the increments grow more aggressive** (recent change)
-- `'shake-up'` — auto-fired when last 3 sessions are all acceptable AND increasing. Suggests ~65% of recent average. Manual via `forceShakeUp: true`
+- `'verify-peak'` — last rated Fair/Bad strictly *below* DP, not yet marked as regression. Default `seconds` is DP itself ("try your best again"). The `alternative` field carries a recalibrate path: `{ seconds, reason, kind: 'step-back' | 'repeat', newPeak }`. The Setup screen surfaces both as cards.
+- `'step-back'` — last rated Bad and not below DP (or DP=0). 60% of last duration, floored at 60s.
+- `'repeat'` — last rated Fair and not below DP. Same duration.
+- `'shake-up'` — auto-fired when last 3 sessions are all acceptable AND increasing. ~65% of recent average. Manual via `forceShakeUp: true`.
+- `'step-up'` — happy path. **Basis is `max(lastSecs, peakSecs)`** (Flavor A) — a casual short success doesn't reset progression, the dog has already demonstrated longer. Increments via `stepUpIncrement(basis, rating)`; past 40 min and 60 min they grow more aggressive. Sub-5min always uses 30s increments regardless of rating (smaller would round to zero after growth-intensity scaling).
 
-**Pre-shake-up peak recovery:** if the last session looks like a shake-up (shorter than the previous acceptable session), the next step-up's basis is the pre-shake-up peak rather than the shake-up duration. Bounded so a Bad-rated session blocks recovery from anything before it.
+**Regression-marking flow.** When a Fair/Bad lands below DP, the next time the user opens Setup they see the verify-best dialog: "Try your best again" (default — DP unchanged) or "Step back" (recalibrate). Picking Step back sets `interpretedAs: 'regression'` on the prior session at Begin time. `demonstratedPeak()` then drops DP to the highest Great/Good *strictly shorter than* the regressed session, or 0 if none exists. Reversible by editing the session record.
+
+**Bad above DP, Fair above DP, success below DP** all leave DP unchanged. The only way DP drops is the explicit regression marking.
+
+**Onboarding seeds DP on first run.** When a user completes onboarding with no prior history, the dual-card goal step asks for a "Current best." On close, `dismissOnboarding(initialBestSeconds)` writes a synthetic session #1 with rating 1 and that duration, giving the algorithm a starting DP to build from.
 
 `growthIntensity` (Settings → Growth Intensity, slow/typical/fast) multiplies the increment by 0.5 / 1.0 / 1.5.
 
-`simulateProjection(history, goalSeconds, maxSteps, opts)` repeatedly applies `computeNextRehearsal` to build a forward dashed line for the chart. The Home tile shows the next 5 projected; the History "Next 10" tab shows 10.
+`simulateProjection(history, goalSeconds, maxSteps, opts)` repeatedly applies `computeNextRehearsal` (treating projected sessions as rated 1) to build a forward dashed line for the chart. Home tile shows the next 5; History "Next 10" tab shows 10. Each row carries `kind` and `reason` so the chart and inspector can label them.
+
+**Warm-up sizing.** `warmUpPools(rehearsalSeconds)` returns size-aware `{ shortVals, longVals }`. Sub-5min stays under 30s. >40min stretches up to 2min, with `generateWarmUps` ensuring a guaranteed mix of sub-1min and 1+min values rather than going homogeneous by chance. 5–40min uses the original 0–55s range.
 
 ---
 
@@ -220,16 +234,21 @@ Some changes go straight to main when they're small and obviously correct.
 
 ## Most-recent state (as of 2026-05-04)
 
-- All branches merged. `main` is at `65cdcc6`.
+- All branches merged. `main` is at `b1407ba`.
+- **Algorithm reworked to the demonstrated-best (DP) model.** Step-up basis = `max(lastSecs, peakSecs)`. Verify-best dialog on Setup when Fair/Bad lands below DP. The only way DP drops is an explicit `interpretedAs: 'regression'` marking — see Algorithm core above.
+- **Onboarding's goal step shows dual cards on first run** (Current best + Rehearsal goal). Picking a Current best seeds session #1 as a Great-rated baseline so the algorithm has a starting DP. Re-opening the guide via the i icon (post-history) shows the original single-goal step.
+- **Algorithm inspector dev tool** at Settings → Developer tools → Algorithm: state (DP, last), next session, next 10 projected with reasons, scratch-history editor with per-row "mark as regression" toggle. Read-only — never touches localStorage.
+- **Session tips:** rotating italic prompt at the bottom of `<SessionView>`, advances per phase, shuffled per session. Library is `src/tips.numbers` (source of truth, edited in Numbers); `src/tips.csv` is the derived form Vite imports as `?raw`. `predev`/`prebuild` scripts auto-export via Numbers.app on macOS; CI builds from the committed CSV. See File layout.
+- Warm-up pools sized to the rehearsal: <5min stays <30s, >40min stretches to 2min with guaranteed mix of <1min and 1+min values.
+- Step-up increment for Good <5min is 30s (was 15s) — smaller values quantize to zero after growth-intensity scaling.
 - Notifications feature OFF. Volume toggle hidden in session view.
 - Dark mode shipped. Settings → Appearance lets users force light/dark or follow system.
-- Test profiles + chart-animation speed picker live in Settings → Developer tools (warning banner above).
-- Home Sessions chart: dots fade-in + slide-up reveal animation. Default speed `'fast'` (500 ms total). Trend line renders statically; line-animation experiments were tried and scrapped.
-- Step-up algorithm has tiers past 40 min and 60 min (bigger jumps once dog handles longer sessions reliably).
+- Test profiles + chart-animation speed picker + algorithm inspector all live in Settings → Developer tools (warning banner above).
+- Home Sessions chart: dots fade-in + slide-up reveal animation. Default speed `'fast'` (500 ms total). Trend line renders statically.
 - Goal-reached recommendation tile appears on Home when peak acceptable session ≥ goalSeconds and user hasn't dismissed for that goal value.
 - Last 7 days strip on Home (day abbreviations + green check dots, no date numbers).
-- Full-month CalendarView with horizontal swipe to change month + Today button.
-- "Sessions" tile (formerly "Trajectory") on Home, with View history pill in top-right.
+- Full-month CalendarView with horizontal swipe + Today button.
+- "Sessions" tile on Home, with View history pill in top-right.
 
 ---
 
