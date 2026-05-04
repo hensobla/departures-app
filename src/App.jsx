@@ -2436,7 +2436,7 @@ const THEME_OPTIONS = [
 function SettingsView({
   volume, notificationsEnabled, growthIntensity, themeMode, notifPermission,
   onVolumeChange, onNotificationsChange, onGrowthIntensityChange, onThemeModeChange,
-  onPreviewSound, onTestNotification, onLoadProfile, onBack,
+  onPreviewSound, onTestNotification, onOpenTestProfiles, onBack,
 }) {
   const disabled = !notificationsEnabled;
 
@@ -2640,38 +2640,71 @@ function SettingsView({
           </div>
         </div>
 
-        {/* Test profiles — dev/testing aid for swapping data on demand. */}
+        {/* Quiet entry to the developer / advanced sub-page. Lives at the
+            bottom so it doesn't compete with the main settings, but is
+            still findable for testing. */}
+        <button
+          onClick={onOpenTestProfiles}
+          className="btn-ghost text-xs w-full py-3 mt-2 flex items-center justify-center gap-1"
+          style={{ color: 'var(--ink-muted)' }}
+        >
+          Developer · Test profiles
+          <ChevronRight size={12} />
+        </button>
+
+      </div>
+    </div>
+  );
+}
+
+function TestProfilesView({ onLoadProfile, onBack }) {
+  return (
+    <div className="fade-up flex flex-col flex-1 min-h-0">
+      <TopBar
+        title="TEST PROFILES"
+        left={<button onClick={onBack} className="btn-ghost p-2" aria-label="Back"><ChevronLeft size={22} /></button>}
+      />
+      <div className="flex-1 min-h-0 px-5 pb-6 overflow-y-auto scrollbar-thin">
+        {/* Warning banner — clay-bordered to read as "be careful". */}
         <div
           className="card p-4 mb-4"
-          style={{ borderStyle: 'dashed', borderColor: 'var(--gold)' }}
+          style={{
+            borderColor: 'var(--clay)',
+            borderStyle: 'dashed',
+            background: 'color-mix(in srgb, var(--clay) 8%, transparent)',
+          }}
+          role="alert"
         >
-          <div className="flex items-center gap-2 mb-3">
-            <div className="text-xs tracking-widest uppercase" style={{ color: 'var(--ink-muted)' }}>
-              Test profiles
-            </div>
+          <div className="text-xs tracking-widest uppercase mb-2" style={{ color: 'var(--clay)', fontWeight: 500 }}>
+            Heads up
           </div>
-          <div className="text-xs mb-3" style={{ color: 'var(--ink-muted)' }}>
-            Replace your training data with a preset for testing. Your current data is automatically backed up to <span className="mono">history.backup</span> in device storage before each swap.
+          <div className="text-sm leading-snug" style={{ color: 'var(--ink)' }}>
+            These options replace your training history. Use carefully.
           </div>
-          <div className="space-y-2">
-            {TEST_PROFILES.map(p => (
-              <button
-                key={p.id}
-                onClick={() => onLoadProfile(p.id)}
-                className="w-full text-left rounded-xl p-3 transition-all"
-                style={{ border: '1px solid var(--line)', background: 'var(--surface)' }}
-              >
-                <div className="text-sm" style={{ color: 'var(--ink)', fontWeight: 500 }}>
-                  {p.label}
-                </div>
-                <div className="text-xs mt-0.5 leading-snug" style={{ color: 'var(--ink-muted)' }}>
-                  {p.desc}
-                </div>
-              </button>
-            ))}
+          <div className="text-xs leading-snug mt-2" style={{ color: 'var(--ink-soft)' }}>
+            Your current data is preserved at <span className="mono">history.backup</span> in device storage before each swap, but recovering it requires opening the browser console.
           </div>
         </div>
 
+        <div className="text-xs tracking-widest uppercase mb-2 px-1" style={{ color: 'var(--ink-muted)' }}>
+          Presets
+        </div>
+        <div className="space-y-2">
+          {TEST_PROFILES.map(p => (
+            <button
+              key={p.id}
+              onClick={() => onLoadProfile(p.id)}
+              className="card w-full text-left p-4 transition-all"
+            >
+              <div className="text-sm" style={{ color: 'var(--ink)', fontWeight: 500 }}>
+                {p.label}
+              </div>
+              <div className="text-xs mt-0.5 leading-snug" style={{ color: 'var(--ink-muted)' }}>
+                {p.desc}
+              </div>
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -3311,8 +3344,13 @@ export default function App() {
             onThemeModeChange={setThemeMode}
             onPreviewSound={() => playAlarm(volume / 100)}
             onTestNotification={handleTestNotification}
-            onLoadProfile={handleLoadProfile}
+            onOpenTestProfiles={() => setView('settings-profiles')}
             onBack={() => setView('home')}
+          />
+        ) : view === 'settings-profiles' ? (
+          <TestProfilesView
+            onLoadProfile={handleLoadProfile}
+            onBack={() => setView('settings')}
           />
         ) : view === 'setup' ? (
           <Setup
