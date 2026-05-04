@@ -35,6 +35,13 @@ const SEED_HISTORY = [
 
 const DEFAULT_GOAL_SECONDS = 3600; // 1 hour
 
+// Feature flag. Notifications still need polish (background reliability on
+// iOS, silent-switch handling, PWA install gate). Until that lands, hide the
+// settings UI and force the runtime "enabled" value to false so no chimes
+// or system notifications fire — the underlying code paths stay in place
+// and the persisted user preference is preserved for when we flip this on.
+const NOTIFICATIONS_FEATURE_ENABLED = false;
+
 /* =====================================================================
    TEST PROFILES — swappable preset histories for development/testing.
    Surfaced via the Settings "Test profiles" card. Loading a profile
@@ -2460,7 +2467,10 @@ function SettingsView({
       />
       <div className="flex-1 min-h-0 px-5 pb-6 overflow-y-auto scrollbar-thin">
 
-        {/* Notifications + Audio (merged) */}
+        {/* Notifications + Audio (merged). Gated on the feature flag — the
+            entire card is hidden until the notification experience is
+            polished enough to ship to users. */}
+        {NOTIFICATIONS_FEATURE_ENABLED && (
         <div className="card p-4 mb-4">
           <div className="flex items-center gap-2 mb-3">
             {notificationsEnabled ? <Bell size={16} style={{ color: 'var(--ink-muted)' }} /> : <BellOff size={16} style={{ color: 'var(--ink-muted)' }} />}
@@ -2558,6 +2568,7 @@ function SettingsView({
             </div>
           </div>
         </div>
+        )}
 
         {/* Appearance — light/dark/system */}
         <div className="card p-4 mb-4">
@@ -2905,7 +2916,13 @@ export default function App() {
   const [view, setView] = useState('home');
   const [history, setHistory] = useState(null);
   const [activeSession, setActiveSession] = useState(null);
-  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  // notificationsEnabledRaw is the user's persisted preference. The
+  // effective value (notificationsEnabled) gates on the feature flag so
+  // alerts can't fire while the experience is still being polished. We
+  // keep the raw state around so the user's choice survives the toggle
+  // being re-enabled in a future build.
+  const [notificationsEnabledRaw, setNotificationsEnabled] = useState(true);
+  const notificationsEnabled = NOTIFICATIONS_FEATURE_ENABLED && notificationsEnabledRaw;
   const [volume, setVolume] = useState(80);
   const [growthIntensity, setGrowthIntensity] = useState('typical');
   // 'system' = follow OS preference (default); 'light'/'dark' = forced.
@@ -3009,13 +3026,15 @@ export default function App() {
   useEffect(() => {
     if (!loaded) return;
     storageSet('settings', {
-      notificationsEnabled,
+      // Persist the raw user preference, not the feature-flag-gated value,
+      // so flipping the flag on later restores their original choice.
+      notificationsEnabled: notificationsEnabledRaw,
       volume,
       growthIntensity,
       goalSeconds,
       themeMode,
     });
-  }, [notificationsEnabled, volume, growthIntensity, goalSeconds, themeMode, loaded]);
+  }, [notificationsEnabledRaw, volume, growthIntensity, goalSeconds, themeMode, loaded]);
 
   // Apply themeMode to <html data-theme>. CSS does the rest:
   //   - 'system' → no attribute → :root + prefers-color-scheme media query
