@@ -2182,6 +2182,14 @@ function ProgressionChart({
     };
   }
 
+  // For the stroke-only Lines used during the reveal animation: same data
+  // but with `minutes` and `projMinutes` masked to null past the current
+  // revealedCount, so the path only spans points that have already been
+  // revealed. This makes the line grow segment-by-segment in lock-step
+  // with the dot reveals (rather than relying on Recharts' built-in
+  // path-length-based animation, which doesn't quite map to dot pacing).
+  // Computed below after revealedCount is initialized.
+
   const goalMinutes = goalSeconds / 60;
   const allMinutes = [
     ...historyRows.map(d => d.minutes),
@@ -2244,6 +2252,19 @@ function ProgressionChart({
     };
   };
 
+  // Augmented data: original fields drive the dot Lines (full data, dots
+  // animate via dotAnimStyle), masked fields drive the stroke Lines (so
+  // the path only spans revealed points). When animation is off, the
+  // masked fields fall through to the originals.
+  const augmentedChartData = chartData.map((row, i) => {
+    const masked = animationEnabled && i >= revealedCount;
+    return {
+      ...row,
+      lineMinutes: masked ? null : row.minutes,
+      lineProjMinutes: masked ? null : row.projMinutes,
+    };
+  });
+
   const renderHistoryDot = (props) => {
     const { cx, cy, payload, index } = props;
     if (payload?.minutes == null) return <g key={index} />;
@@ -2278,7 +2299,12 @@ function ProgressionChart({
 
   const tooltipContent = ({ active, payload, label }) => {
     if (!active || !payload || !payload.length) return null;
-    const entries = payload.filter(p => p.value != null);
+    // Drop the lineMinutes / lineProjMinutes entries — those exist purely
+    // to drive the masked stroke animation and would otherwise show as
+    // duplicate values to the real series.
+    const entries = payload.filter(
+      p => p.value != null && p.dataKey !== 'lineMinutes' && p.dataKey !== 'lineProjMinutes'
+    );
     if (!entries.length) return null;
 
     // Bridge: prefer the history entry over the duplicate projection entry.
@@ -2368,7 +2394,7 @@ function ProgressionChart({
       >
         <ResponsiveContainer>
           <LineChart
-            data={chartData}
+            data={augmentedChartData}
             margin={compact ? { top: 10, right: 10, left: 10, bottom: 4 } : { top: 8, right: 12, left: -24, bottom: 0 }}
           >
             <CartesianGrid stroke="var(--line)" strokeDasharray="2 4" vertical={false} />
@@ -2424,37 +2450,66 @@ function ProgressionChart({
                 strokeDasharray="2 3"
               />
             )}
-            {/* Projection first so history dots render on top at the bridge.
-                Active-dot radii bumped on touch surfaces so the scrubbed
-                point is easy to track when a finger covers part of the chart. */}
+            {/* The line stroke and the dots are split into separate Line
+                components so they can animate on different mechanisms:
+                  - stroke Lines use a masked dataKey (lineMinutes /
+                    lineProjMinutes) that drops to null past revealedCount,
+                    so the path grows segment-by-segment in lock-step with
+                    the dot reveals.
+                  - dot Lines render against the full unmasked data with
+                    transparent strokes; the custom dot renderers handle
+                    the per-point fade-in via dotAnimStyle.
+                Recharts' built-in line animation is disabled on both
+                because we're driving everything from React state.
+                Projection first so the history dots layer on top at the
+                bridge index. */}
+
+            {/* Stroke-only: projection (dashed) */}
             <Line
-              key={`proj-${animKey}`}
               type="monotone"
-              dataKey="projMinutes"
+              dataKey="lineProjMinutes"
               stroke="var(--clay)"
               strokeOpacity={0.5}
               strokeWidth={1.5}
               strokeDasharray="4 4"
-              dot={renderProjDot}
-              activeDot={{ r: compact ? 7 : 7, fill: 'var(--surface)', stroke: 'var(--clay)', strokeWidth: 1.75 }}
-              isAnimationActive={animationEnabled}
-              animationDuration={animDuration}
-              animationBegin={0}
-              animationEasing="linear"
+              dot={false}
+              activeDot={false}
+              isAnimationActive={false}
               connectNulls={false}
             />
+            {/* Stroke-only: history (solid) */}
             <Line
-              key={`hist-${animKey}`}
               type="monotone"
-              dataKey="minutes"
+              dataKey="lineMinutes"
               stroke="var(--clay)"
               strokeWidth={1.5}
+              dot={false}
+              activeDot={false}
+              isAnimationActive={false}
+              connectNulls={false}
+            />
+            {/* Dot-only: projection — invisible stroke, custom dot renderer
+                with fade-in. Tooltip activeDot lives here so scrubbing
+                still resolves to the projection's hollow active circle. */}
+            <Line
+              type="monotone"
+              dataKey="projMinutes"
+              stroke="transparent"
+              strokeWidth={0}
+              dot={renderProjDot}
+              activeDot={{ r: compact ? 7 : 7, fill: 'var(--surface)', stroke: 'var(--clay)', strokeWidth: 1.75 }}
+              isAnimationActive={false}
+              connectNulls={false}
+            />
+            {/* Dot-only: history — same idea. */}
+            <Line
+              type="monotone"
+              dataKey="minutes"
+              stroke="transparent"
+              strokeWidth={0}
               dot={renderHistoryDot}
               activeDot={{ r: compact ? 7 : 7, strokeWidth: 1.5 }}
-              isAnimationActive={animationEnabled}
-              animationDuration={animDuration}
-              animationBegin={0}
-              animationEasing="linear"
+              isAnimationActive={false}
               connectNulls={false}
             />
           </LineChart>
