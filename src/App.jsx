@@ -2133,6 +2133,10 @@ function ProgressionChart({
   const [chartRange, setChartRange] = useState('all');
   const animDuration = CHART_ANIM_DURATIONS[animationSpeed] ?? 0;
   const animationEnabled = animDuration > 0;
+  // The line stroke is intentionally drawn slower than the dot reveals
+  // (~15% longer) so the line "catches up to" each dot just after it lands.
+  // Reads as natural pencil-drawing rather than two animations racing.
+  const lineAnimDuration = Math.round(animDuration * 1.15);
 
   const ascending = [...history].sort((a, b) => a.number - b.number);
   let sliced;
@@ -2447,7 +2451,7 @@ function ProgressionChart({
               dot={renderProjDot}
               activeDot={{ r: compact ? 7 : 7, fill: 'var(--surface)', stroke: 'var(--clay)', strokeWidth: 1.75 }}
               isAnimationActive={animationEnabled}
-              animationDuration={animDuration}
+              animationDuration={lineAnimDuration}
               animationBegin={0}
               animationEasing="linear"
               connectNulls={false}
@@ -2461,7 +2465,7 @@ function ProgressionChart({
               dot={renderHistoryDot}
               activeDot={{ r: compact ? 7 : 7, strokeWidth: 1.5 }}
               isAnimationActive={animationEnabled}
-              animationDuration={animDuration}
+              animationDuration={lineAnimDuration}
               animationBegin={0}
               animationEasing="linear"
               connectNulls={false}
