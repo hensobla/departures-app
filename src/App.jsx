@@ -34,6 +34,95 @@ const SEED_HISTORY = [
 
 const DEFAULT_GOAL_SECONDS = 3600; // 1 hour
 
+/* =====================================================================
+   TEST PROFILES — swappable preset histories for development/testing.
+   Surfaced via the Settings "Test profiles" card. Loading a profile
+   replaces the user's history (after a confirm dialog); the previous
+   value is preserved by storageSetWithBackup at history.backup.
+   ===================================================================== */
+
+// Generates a realistic ~5-month progression: 60 sessions ending today,
+// with a mix of step-ups, shake-ups, fair days, and bad days. The
+// underlying "target" follows a logistic curve so the chart starts near
+// 30s, crosses the 1h goal around session 40, and plateaus around
+// 75 min. Shake-ups and bad days dip the actual recorded duration off
+// the target; the user's peak (and goal-progress %) keeps climbing.
+function generateLotsOfData() {
+  const sessions = [];
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const SESSIONS = 60;
+  const SPAN_DAYS = 150; // ~5 months
+  // Logistic params: f(i) = L / (1 + exp(-k * (i - midpoint)))
+  // L=4500 (75min ceiling), k=0.15, midpoint=30. Crosses goal (3600) at i≈40.
+  const L = 4500;
+  const K = 0.15;
+  const MID = 30;
+
+  for (let i = 0; i < SESSIONS; i++) {
+    const daysAgo = Math.round((SESSIONS - 1 - i) * (SPAN_DAYS / SESSIONS));
+    const date = new Date(today);
+    date.setDate(today.getDate() - daysAgo);
+
+    const targetRaw = L / (1 + Math.exp(-K * (i - MID)));
+    const target = Math.max(30, Math.round(targetRaw / 15) * 15);
+
+    // Deterministic pseudo-random — same i always gives same outcome.
+    const seed = (i * 7919 + 31) % 100;
+    let recordDur, rating;
+
+    if (i > 8 && seed < 10) {
+      // Shake-up — deliberately shorter, still rated well.
+      recordDur = Math.max(15, Math.round(target * 0.55 / 15) * 15);
+      rating = 1;
+    } else if (i > 8 && seed < 17) {
+      // Bad day — shorter and rated 4.
+      recordDur = Math.max(15, Math.round(target * 0.45 / 15) * 15);
+      rating = 4;
+    } else if (i > 8 && seed < 25) {
+      // Fair day — slightly under target, rated 3.
+      recordDur = Math.max(15, Math.round(target * 0.85 / 15) * 15);
+      rating = 3;
+    } else {
+      // Good progression — at target.
+      recordDur = target;
+      rating = (seed % 5 === 0) ? 1 : 2;
+    }
+
+    sessions.push({
+      number: i + 1,
+      date: ymdLocal(date),
+      warmUps: i < 20 ? [10, 5, 15] : [15, 30, 10, 25, 5],
+      rehearsalSeconds: recordDur,
+      notes: '',
+      rating,
+    });
+  }
+  return sessions;
+}
+
+const TEST_PROFILES = [
+  {
+    id: 'lots',
+    label: 'Lots of data',
+    desc: '~60 sessions over the last 5 months. Includes shake-ups, fair days, bad days, and crosses the goal.',
+    generate: generateLotsOfData,
+  },
+  {
+    id: 'demo',
+    label: 'Default demo',
+    desc: 'The original 17-session example that ships with the app.',
+    generate: () => SEED_HISTORY.map(s => ({ ...s })),
+  },
+  {
+    id: 'empty',
+    label: 'No data',
+    desc: 'Empty history. Useful for testing the new-user state and onboarding.',
+    generate: () => [],
+  },
+];
+
 // Allowed range for the warm-up count picker on the Setup screen.
 const WARMUP_MIN = 5;
 const WARMUP_MAX = 10;
@@ -2340,7 +2429,7 @@ const GROWTH_OPTIONS = [
 function SettingsView({
   volume, notificationsEnabled, growthIntensity, notifPermission,
   onVolumeChange, onNotificationsChange, onGrowthIntensityChange,
-  onPreviewSound, onTestNotification, onBack,
+  onPreviewSound, onTestNotification, onLoadProfile, onBack,
 }) {
   const disabled = !notificationsEnabled;
 
@@ -2504,6 +2593,38 @@ function SettingsView({
                 </button>
               );
             })}
+          </div>
+        </div>
+
+        {/* Test profiles — dev/testing aid for swapping data on demand. */}
+        <div
+          className="card p-4 mb-4"
+          style={{ borderStyle: 'dashed', borderColor: 'var(--gold)' }}
+        >
+          <div className="flex items-center gap-2 mb-3">
+            <div className="text-xs tracking-widest uppercase" style={{ color: 'var(--ink-muted)' }}>
+              Test profiles
+            </div>
+          </div>
+          <div className="text-xs mb-3" style={{ color: 'var(--ink-muted)' }}>
+            Replace your training data with a preset for testing. Your current data is automatically backed up to <span className="mono">history.backup</span> in device storage before each swap.
+          </div>
+          <div className="space-y-2">
+            {TEST_PROFILES.map(p => (
+              <button
+                key={p.id}
+                onClick={() => onLoadProfile(p.id)}
+                className="w-full text-left rounded-xl p-3 transition-all"
+                style={{ border: '1px solid var(--line)', background: 'var(--surface)' }}
+              >
+                <div className="text-sm" style={{ color: 'var(--ink)', fontWeight: 500 }}>
+                  {p.label}
+                </div>
+                <div className="text-xs mt-0.5 leading-snug" style={{ color: 'var(--ink-muted)' }}>
+                  {p.desc}
+                </div>
+              </button>
+            ))}
           </div>
         </div>
 
@@ -2848,6 +2969,26 @@ export default function App() {
     }
   };
 
+  const handleLoadProfile = async (id) => {
+    const profile = TEST_PROFILES.find(p => p.id === id);
+    if (!profile) return;
+    const ok = await askConfirm({
+      title: `Load "${profile.label}"?`,
+      message: `This replaces your current history (${(history || []).length} sessions). Your previous data is preserved at history.backup in device storage and can be restored from the browser console if needed.`,
+      confirmLabel: 'Load preset',
+      destructive: true,
+    });
+    if (!ok) return;
+    const data = profile.generate();
+    setHistory(data);
+    storageSetWithBackup('history', data);
+    // Wipe any active session — the resume banner would refer to a number
+    // that may not exist in the new dataset.
+    setActiveSession(null);
+    storageDelete('active');
+    setView('home');
+  };
+
   const handleStartSetup = () => setView('setup');
 
   const handleBeginSession = (draft) => {
@@ -3108,6 +3249,7 @@ export default function App() {
             onGrowthIntensityChange={setGrowthIntensity}
             onPreviewSound={() => playAlarm(volume / 100)}
             onTestNotification={handleTestNotification}
+            onLoadProfile={handleLoadProfile}
             onBack={() => setView('home')}
           />
         ) : view === 'setup' ? (
