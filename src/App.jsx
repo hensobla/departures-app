@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, CartesianGrid, Tooltip, ReferenceLine } from 'recharts';
 import {
   Play, Pause, SkipForward, X, Volume2, VolumeX, Shuffle,
@@ -1166,10 +1166,19 @@ const HOME_KIND_META = {
   'fresh':     { Icon: Play,         label: 'first session',    color: 'var(--ink-muted)' },
 };
 
+// Speed presets exposed via the dev tool below the chart on the home tile.
+const CHART_ANIM_OPTIONS = [
+  { id: 'off',    label: 'Off' },
+  { id: 'slow',   label: 'Slow' },
+  { id: 'medium', label: 'Medium' },
+  { id: 'fast',   label: 'Fast' },
+];
+
 function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSeconds, goalProgress,
                 onStart, onHistory, onShowOnboarding, onSettings, onCalendar, growthIntensity = 'typical',
                 resumable, onResume, onDiscardActive,
-                showGoalReachedRec, onUpdateGoal, onDismissGoalReached }) {
+                showGoalReachedRec, onUpdateGoal, onDismissGoalReached,
+                chartAnimSpeed = 'fast' }) {
   const hasHistory = history && history.length > 0;
   const projection = hasHistory ? simulateProjection(history, goalSeconds, 5, { growthIntensity }) : [];
   const kindMeta = HOME_KIND_META[suggestion?.kind] || HOME_KIND_META['step-up'];
@@ -1281,6 +1290,7 @@ function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSecon
               compact
               height={110}
               historyTake={3}
+              animationSpeed={chartAnimSpeed}
             />
             <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--line)' }}>
               <div className="flex items-center gap-1.5 text-xs mb-2" style={{ color: 'var(--ink-muted)' }}>
@@ -2066,6 +2076,11 @@ const KIND_LABEL = {
  *   historyTake:   When compact, how many trailing history points to show.
  *   showTitle:     Whether to render the "Rehearsal progression" label.
  */
+// Animation speed presets for the compact home chart. Per-point delay is
+// duration/N, so total play time stays constant regardless of how many
+// history+projection points are in the dataset.
+const CHART_ANIM_DURATIONS = { off: 0, slow: 2400, medium: 1200, fast: 500 };
+
 function ProgressionChart({
   history,
   goalSeconds,
@@ -2075,8 +2090,11 @@ function ProgressionChart({
   historyTake = 3,
   showTitle = true,
   growthIntensity = 'typical',
+  animationSpeed = 'off',
 }) {
   const [chartRange, setChartRange] = useState('all');
+  const animDuration = CHART_ANIM_DURATIONS[animationSpeed] ?? 0;
+  const animationEnabled = animDuration > 0;
 
   const ascending = [...history].sort((a, b) => a.number - b.number);
   let sliced;
@@ -2126,6 +2144,7 @@ function ProgressionChart({
     };
   }
 
+
   const goalMinutes = goalSeconds / 60;
   const allMinutes = [
     ...historyRows.map(d => d.minutes),
@@ -2134,11 +2153,70 @@ function ProgressionChart({
   const dataMax = allMinutes.length ? Math.max(...allMinutes) : 0;
   const yMax = Math.max(goalMinutes, dataMax) * 1.1 + 1;
 
+  // ---------- ANIMATION ----------
+  // revealedCount = how many points are "fully shown" (faded in + at final
+  // position). Effect below steps it from 0 → N over animDuration so each
+  // dot's CSS transition fires when its index becomes < revealedCount.
+  // animKey forces the underlying Recharts <Line> components to remount,
+  // which restarts their built-in stroke-draw animation in sync.
+  const totalPoints = chartData.length;
+  const perPointDelay = animationEnabled && totalPoints > 0
+    ? animDuration / totalPoints
+    : 0;
+  const [revealedCount, setRevealedCount] = useState(animationEnabled ? 0 : Infinity);
+  const [animKey, setAnimKey] = useState(0);
+  // Restart whenever speed changes. useLayoutEffect for the reset so the
+  // dots commit to opacity:0 BEFORE the browser paints — otherwise the
+  // first paint after a speed change shows them at opacity:1 (the previous
+  // animation's end state), and the CSS transition would then run
+  // *backwards* from visible to hidden before the actual reveal sequence.
+  useLayoutEffect(() => { setAnimKey(k => k + 1); }, [animationSpeed]);
+  useLayoutEffect(() => {
+    if (!animationEnabled || totalPoints === 0) {
+      setRevealedCount(Infinity);
+      return;
+    }
+    setRevealedCount(0);
+  }, [animKey, totalPoints, animationEnabled]);
+  // Schedule the per-point timeouts in a regular effect so they don't block
+  // paint. The pre-paint useLayoutEffect above has already committed
+  // revealedCount=0, so the user sees an empty chart first, then the
+  // staggered fade-ins happen here.
+  useEffect(() => {
+    if (!animationEnabled || totalPoints === 0) return;
+    const timeouts = [];
+    for (let i = 1; i <= totalPoints; i++) {
+      timeouts.push(setTimeout(() => setRevealedCount(i), perPointDelay * i));
+    }
+    return () => timeouts.forEach(clearTimeout);
+  }, [animKey, totalPoints, animDuration, animationEnabled]);
+
+  // Per-dot transition duration. Slightly longer than the per-point step so
+  // each dot's fade overlaps a touch with the next reveal — feels smoother
+  // than crisp 100% non-overlapping fades.
+  const dotTransitionMs = animationEnabled ? Math.max(120, perPointDelay * 1.4) : 0;
+  // Helper: returns the inline style props for a dot's wrapping <g> based
+  // on whether it's been revealed yet.
+  const dotAnimStyle = (index) => {
+    if (!animationEnabled) return undefined;
+    const revealed = index < revealedCount;
+    return {
+      opacity: revealed ? 1 : 0,
+      transform: revealed ? 'translate(0px, 0px)' : 'translate(0px, 8px)',
+      transition: `opacity ${dotTransitionMs}ms ease-out, transform ${dotTransitionMs}ms ease-out`,
+    };
+  };
+
+
   const renderHistoryDot = (props) => {
     const { cx, cy, payload, index } = props;
     if (payload?.minutes == null) return <g key={index} />;
     const color = ratingColor(payload.rating) || 'var(--clay)';
-    return <circle key={index} cx={cx} cy={cy} r={compact ? 3 : 3.5} fill={color} stroke="none" />;
+    return (
+      <g key={index} style={dotAnimStyle(index)}>
+        <circle cx={cx} cy={cy} r={compact ? 3 : 3.5} fill={color} stroke="none" />
+      </g>
+    );
   };
 
   const renderProjDot = (props) => {
@@ -2148,16 +2226,17 @@ function ProgressionChart({
     // history's rating-colored dot.
     if (payload._bridge) return <g key={index} />;
     return (
-      <circle
-        key={index}
-        cx={cx}
-        cy={cy}
-        r={compact ? 3 : 3.5}
-        fill="var(--surface)"
-        stroke="var(--clay)"
-        strokeOpacity={0.6}
-        strokeWidth={1.5}
-      />
+      <g key={index} style={dotAnimStyle(index)}>
+        <circle
+          cx={cx}
+          cy={cy}
+          r={compact ? 3 : 3.5}
+          fill="var(--surface)"
+          stroke="var(--clay)"
+          strokeOpacity={0.6}
+          strokeWidth={1.5}
+        />
+      </g>
     );
   };
 
@@ -2309,9 +2388,10 @@ function ProgressionChart({
                 strokeDasharray="2 3"
               />
             )}
-            {/* Projection first so history dots render on top at the bridge.
-                Active-dot radii bumped on touch surfaces so the scrubbed
-                point is easy to track when a finger covers part of the chart. */}
+            {/* Projection first so history dots layer on top at the
+                bridge index. The trend line is rendered statically (no
+                draw animation); only the dots animate, via the custom
+                renderers. */}
             <Line
               type="monotone"
               dataKey="projMinutes"
@@ -2724,7 +2804,7 @@ function SettingsView({
   );
 }
 
-function TestProfilesView({ onLoadProfile, onBack }) {
+function TestProfilesView({ onLoadProfile, chartAnimSpeed, onChartAnimSpeedChange, onBack }) {
   return (
     <div className="fade-up flex flex-col flex-1 min-h-0">
       <TopBar
@@ -2756,7 +2836,7 @@ function TestProfilesView({ onLoadProfile, onBack }) {
         <div className="text-xs tracking-widest uppercase mb-2 px-1" style={{ color: 'var(--ink-muted)' }}>
           Presets
         </div>
-        <div className="space-y-2">
+        <div className="space-y-2 mb-6">
           {TEST_PROFILES.map(p => (
             <button
               key={p.id}
@@ -2771,6 +2851,35 @@ function TestProfilesView({ onLoadProfile, onBack }) {
               </div>
             </button>
           ))}
+        </div>
+
+        {/* Chart animation speed — affects the dot reveal on the home
+            Sessions tile. Saved with the rest of settings. */}
+        <div className="text-xs tracking-widest uppercase mb-2 px-1" style={{ color: 'var(--ink-muted)' }}>
+          Chart animation
+        </div>
+        <div className="card p-3">
+          <div className="flex items-center gap-1 p-1 rounded-full" style={{ background: 'var(--bg-warm)' }}>
+            {CHART_ANIM_OPTIONS.map(opt => {
+              const active = chartAnimSpeed === opt.id;
+              return (
+                <button
+                  key={opt.id}
+                  onClick={() => onChartAnimSpeedChange(opt.id)}
+                  className="flex-1 text-xs px-2 py-1.5 rounded-full transition-all whitespace-nowrap"
+                  style={{
+                    background: active ? 'var(--surface)' : 'transparent',
+                    color: active ? 'var(--ink)' : 'var(--ink-muted)',
+                    fontWeight: active ? 500 : 400,
+                    border: active ? '1px solid var(--line)' : '1px solid transparent',
+                  }}
+                  aria-pressed={active}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
     </div>
@@ -2983,6 +3092,9 @@ export default function App() {
   const [growthIntensity, setGrowthIntensity] = useState('typical');
   // 'system' = follow OS preference (default); 'light'/'dark' = forced.
   const [themeMode, setThemeMode] = useState('system');
+  // Default to 'fast' so the reveal feels snappy on the home tile; users
+  // can override (or switch to 'off') via Settings → Developer tools.
+  const [chartAnimSpeed, setChartAnimSpeed] = useState('fast');
   const [notifPermission, setNotifPermission] = useState(() => getNotificationPermission());
   const [goalSeconds, setGoalSeconds] = useState(DEFAULT_GOAL_SECONDS);
   // Persisted as the goalSeconds value for which the goal-reached
@@ -3069,6 +3181,9 @@ export default function App() {
       if (['system', 'light', 'dark'].includes(settings.themeMode)) {
         setThemeMode(settings.themeMode);
       }
+      if (['off', 'slow', 'medium', 'fast'].includes(settings.chartAnimSpeed)) {
+        setChartAnimSpeed(settings.chartAnimSpeed);
+      }
     }
 
     if (!storageGet('onboardingDismissed') && hist.length === 0) {
@@ -3097,8 +3212,9 @@ export default function App() {
       growthIntensity,
       goalSeconds,
       themeMode,
+      chartAnimSpeed,
     });
-  }, [notificationsEnabledRaw, volume, growthIntensity, goalSeconds, themeMode, loaded]);
+  }, [notificationsEnabledRaw, volume, growthIntensity, goalSeconds, themeMode, chartAnimSpeed, loaded]);
 
   // Apply themeMode to <html data-theme>. CSS does the rest:
   //   - 'system' → no attribute → :root + prefers-color-scheme media query
@@ -3434,6 +3550,7 @@ export default function App() {
             showGoalReachedRec={showGoalReachedRec}
             onUpdateGoal={handleUpdateGoalFromHome}
             onDismissGoalReached={handleDismissGoalReached}
+            chartAnimSpeed={chartAnimSpeed}
           />
         ) : view === 'settings' ? (
           <SettingsView
@@ -3454,6 +3571,8 @@ export default function App() {
         ) : view === 'settings-profiles' ? (
           <TestProfilesView
             onLoadProfile={handleLoadProfile}
+            chartAnimSpeed={chartAnimSpeed}
+            onChartAnimSpeedChange={setChartAnimSpeed}
             onBack={() => setView('settings')}
           />
         ) : view === 'setup' ? (
