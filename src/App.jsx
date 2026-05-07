@@ -6,7 +6,7 @@ import {
   Pencil, Trash2, Plus, Target, TrendingUp, TrendingDown, Info,
   DoorOpen, Heart, Share, MoreVertical, Settings as SettingsIcon,
   Bell, BellOff, Gauge, Calendar as CalendarIcon,
-  Sun, Moon, Monitor
+  Sun, Moon, Monitor, List
 } from 'lucide-react';
 import tipsCsv from './tips.csv?raw';
 
@@ -1749,6 +1749,10 @@ function Setup({ nextNumber, suggestion, onBack, onStart, shakeUpSuggestion }) {
    ===================================================================== */
 function SessionView({ session, soundEnabled, toggleSound, volume = 100, onUpdate, onAbort, onComplete, askConfirm }) {
   const [now, setNow] = useState(Date.now());
+  // Overlay that lists all phases of the current session. Conditional
+  // render below the hooks so the timer/keepalive/wake-lock continue
+  // running uninterrupted while the overview is open.
+  const [showingOverview, setShowingOverview] = useState(false);
   useWakeLock(session.phaseState === 'running');
 
   // Shuffled tip rotation. The queue is built once per SessionView mount
@@ -1889,17 +1893,42 @@ function SessionView({ session, soundEnabled, toggleSound, volume = 100, onUpdat
                   : phase.type === 'settle' ? 'var(--sage)'
                   : 'var(--ink)';
 
+  if (showingOverview) {
+    return (
+      <SessionOverview
+        session={session}
+        remaining={remaining}
+        nextPhase={nextPhase}
+        isLast={isLast}
+        onAdvance={() => {
+          setShowingOverview(false);
+          nextPhaseAction();
+        }}
+        onClose={() => setShowingOverview(false)}
+      />
+    );
+  }
+
   return (
     <div className="fade-up flex flex-col flex-1 min-h-0">
       <TopBar
         title={`SESSION ${session.number}`}
-        left={<button onClick={abort} className="btn-ghost p-2"><X size={22} /></button>}
-        // Volume toggle only meaningful when notifications are an enabled
-        // feature. Hidden alongside the rest of the notifications UI when
-        // the feature flag is off.
-        right={NOTIFICATIONS_FEATURE_ENABLED
-          ? <button onClick={toggleSound} className="btn-ghost p-2">{soundEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}</button>
-          : null
+        left={<button onClick={abort} className="btn-ghost p-2" aria-label="Abort session"><X size={22} /></button>}
+        right={
+          <div className="flex items-center">
+            {NOTIFICATIONS_FEATURE_ENABLED && (
+              <button onClick={toggleSound} className="btn-ghost p-2" aria-label={soundEnabled ? 'Mute' : 'Unmute'}>
+                {soundEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
+              </button>
+            )}
+            <button
+              onClick={() => setShowingOverview(true)}
+              className="btn-ghost p-2"
+              aria-label="Session overview"
+            >
+              <List size={22} />
+            </button>
+          </div>
         }
       />
       <div className="flex-1 flex flex-col items-center justify-center px-6 text-center">
@@ -1907,7 +1936,7 @@ function SessionView({ session, soundEnabled, toggleSound, volume = 100, onUpdat
           {phase.label}
         </div>
         <div
-          className={`serif italic text-2xl mb-8 ${session.phaseState === 'waiting' ? 'pulse' : ''}`}
+          className="serif italic text-2xl mb-8"
           style={{ color: cueAccent, maxWidth: '280px', lineHeight: 1.3 }}
         >
           {session.phaseState === 'complete'
@@ -1976,6 +2005,143 @@ function SessionView({ session, soundEnabled, toggleSound, volume = 100, onUpdat
             title={`${p.label} · ${formatTime(p.durationSeconds)}`}
           />
         ))}
+      </div>
+    </div>
+  );
+}
+
+/* =====================================================================
+   SESSION OVERVIEW — full list of warm-ups / settles / rehearsal for the
+   active session. Rendered as a replacement view inside SessionView, NOT
+   as a separate route, so the timer / audio keepalive / wake lock at the
+   top of SessionView keep running uninterrupted while it's open.
+   ===================================================================== */
+function SessionOverview({ session, remaining, nextPhase, isLast, onAdvance, onClose }) {
+  const { phases, currentPhaseIndex, phaseState } = session;
+  const phaseJustCompleted = phaseState === 'complete';
+
+  const phaseIcon = (type) => {
+    if (type === 'warmup') return DoorOpen;
+    if (type === 'rehearsal') return Clock;
+    return Heart; // settle
+  };
+  const phaseAccent = (type) => {
+    if (type === 'warmup') return 'var(--clay)';
+    if (type === 'rehearsal') return 'var(--clay-deep)';
+    return 'var(--sage)'; // settle
+  };
+
+  return (
+    <div className="fade-up flex flex-col flex-1 min-h-0">
+      <TopBar
+        title={`SESSION ${session.number}`}
+        right={
+          <button onClick={onClose} className="btn-ghost p-2" aria-label="Close overview">
+            <X size={22} />
+          </button>
+        }
+      />
+      <div className="flex-1 min-h-0 px-5 pb-6 overflow-y-auto scrollbar-thin">
+        <div className="text-xs tracking-widest uppercase mb-3 mt-1 px-1" style={{ color: 'var(--ink-muted)' }}>
+          {phases.length} steps
+        </div>
+        <ol className="card list-none p-0 overflow-hidden">
+          {phases.map((p, i) => {
+            const Icon = phaseIcon(p.type);
+            const accent = phaseAccent(p.type);
+            const isDone = i < currentPhaseIndex || (i === currentPhaseIndex && phaseState === 'complete');
+            const isActive = i === currentPhaseIndex && phaseState !== 'complete';
+            const isJustCompleted = phaseJustCompleted && i === currentPhaseIndex;
+            const isRehearsal = p.type === 'rehearsal';
+
+            // Display duration: countdown for the active phase (running or
+            // paused both reflect time-left from `remaining`), full phase
+            // length otherwise.
+            const displaySeconds =
+              isActive && (phaseState === 'running' || phaseState === 'paused')
+                ? remaining
+                : p.durationSeconds;
+
+            return (
+              <li
+                key={i}
+                className={`flex items-center gap-3 transition-all ${isJustCompleted ? 'pulse-row-bg' : ''}`}
+                style={{
+                  padding: isRehearsal ? '18px 14px' : '11px 14px',
+                  opacity: isDone && !isJustCompleted ? 0.45 : 1,
+                  borderTop: i === 0 ? 'none' : '1px solid var(--line)',
+                  borderLeft: isActive ? '3px solid var(--clay)' : '3px solid transparent',
+                  background: isJustCompleted
+                    ? undefined // handled by .pulse-row-bg
+                    : isRehearsal ? 'color-mix(in srgb, var(--clay-deep) 5%, transparent)'
+                    : isActive ? 'color-mix(in srgb, var(--clay) 6%, transparent)'
+                    : undefined,
+                }}
+              >
+                <div
+                  className="flex items-center justify-center rounded-full shrink-0"
+                  style={{
+                    width: isRehearsal ? 36 : 26,
+                    height: isRehearsal ? 36 : 26,
+                    background: isDone && !isJustCompleted ? 'var(--bg-warm)' : `color-mix(in srgb, ${accent} 15%, transparent)`,
+                    color: accent,
+                  }}
+                >
+                  {isDone && !isJustCompleted ? (
+                    <Check size={isRehearsal ? 18 : 12} />
+                  ) : (
+                    <Icon size={isRehearsal ? 20 : 14} />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div
+                    className="leading-tight"
+                    style={{
+                      color: 'var(--ink)',
+                      fontWeight: isActive || isJustCompleted || isRehearsal ? 500 : 400,
+                      fontSize: isRehearsal ? 19 : 14,
+                      fontStyle: isRehearsal ? 'italic' : 'normal',
+                      fontFamily: isRehearsal ? 'var(--font-serif, serif)' : undefined,
+                    }}
+                  >
+                    {p.label}
+                  </div>
+                  {isActive && (
+                    <div className="text-xs uppercase tracking-widest mt-0.5" style={{ color: accent, fontWeight: 500 }}>
+                      {phaseState === 'running' ? 'Running' :
+                       phaseState === 'paused' ? 'Paused' : 'Ready'}
+                    </div>
+                  )}
+                  {isJustCompleted && (
+                    <div className="text-xs uppercase tracking-widest mt-0.5" style={{ color: 'var(--sage)', fontWeight: 500 }}>
+                      Complete
+                    </div>
+                  )}
+                </div>
+                {isJustCompleted ? (
+                  <button
+                    onClick={onAdvance}
+                    className="btn-primary text-xs flex items-center gap-1 shrink-0"
+                    style={{ padding: '7px 12px', borderRadius: 999 }}
+                  >
+                    Next Step <ChevronRight size={12} />
+                  </button>
+                ) : (
+                  <div
+                    className={`serif tabular shrink-0 ${isActive && phaseState === 'running' ? 'pulse' : ''}`}
+                    style={{
+                      fontSize: isRehearsal ? 24 : 16,
+                      fontWeight: isActive || isRehearsal ? 500 : 400,
+                      color: isDone ? 'var(--ink-muted)' : isActive ? accent : isRehearsal ? 'var(--clay-deep)' : 'var(--ink)',
+                    }}
+                  >
+                    {formatTime(displaySeconds)}
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ol>
       </div>
     </div>
   );
