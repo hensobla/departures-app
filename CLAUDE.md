@@ -4,7 +4,7 @@ A Vite + React PWA that helps owners walk their dog through separation
 anxiety with graduated departure rehearsals. Deployed to GitHub Pages at
 <https://hensobla.github.io/departures-app/>.
 
-The app lives almost entirely in **one file** (`src/App.jsx`, ~3,600 lines).
+The app lives almost entirely in **one file** (`src/App.jsx`, ~4,400 lines).
 Don't try to "modernize" by splitting it up unless asked — the user has
 deliberately kept it monolithic so it's easy to scroll/grep through and
 keeps the merge surface small. New components are appended; never extract
@@ -85,14 +85,14 @@ Search for these comment headers (`/* === SECTION === */`) to jump:
 |---|---|---|
 | Top of file | 1–110 | Imports (incl. `tipsCsv` raw), `SEED_HISTORY`, `DEFAULT_GOAL_SECONDS = 3600`, **`NOTIFICATIONS_FEATURE_ENABLED = false`**, in-session tips library (`parseTipsCsv`, `TIPS`, `shuffledTips`) |
 | TEST PROFILES | ~110–205 | `generateLotsOfData()` (logistic curve), `TEST_PROFILES` array (Lots / Demo / Empty) |
-| Misc helpers | ~205–355 | Formatters (`formatTime`, `formatTimeLong`, `parseMMSS`, `formatDate`, `ymdLocal`), `buildSessionDaySet`, warm-up generation (`warmUpPools`, `pickWarmUpValue`, `generateWarmUps`), `buildPhases`, `phaseCue`, `roundDuration` |
+| Misc helpers | ~205–355 | Formatters (`formatTime`, `formatTimeLong`, `parseMMSS`, `formatDate`, `ymdLocal`, `daysBetweenYmd`), `buildSessionDaySet`, warm-up generation (`warmUpPools`, `pickWarmUpValue`, `generateWarmUps`), `buildPhases`, `phaseCue`, `roundDuration` |
 | Algorithm | ~355–650 | `demonstratedPeak`, `stepUpIncrement`, `computeNextRehearsal`, `simulateProjection`, `peakAcceptableSeconds`, `estimateSessionsToGoal`, `computeGoalProgress`, `estimateText` |
 | Storage | ~650–700 | `storageGet/Set/Delete`, `storageSetWithBackup` (history.backup) |
 | Notifications | ~700–760 | `notificationsSupported`, `requestNotificationPermission`, `fireSystemNotification`, `firePhaseEndAlert` |
 | Audio + alarm | ~750–960 | `playAlarm`, `buildChimeWav`, `buildKeepaliveWav`, `useAudioKeepalive` (iOS-PWA-stays-alive trick), `useWakeLock` |
 | Calendar bits | ~960–1310 | `RatingSelector`, `ConfirmDialog`, `TopBar`, `CheckDot`, `LastSevenDaysStrip`, `CalendarView` (full-month + swipe + Today) |
-| `<Home>` | ~1325–1515 | Home screen. Handles `verify-peak` kind tile + reason copy. **Keep it terse — every change here goes through review.** |
-| `<Setup>` | ~1516–1750 | Pre-session screen. Includes the **verify-best dialog cards** (two cards: "Try your best again" / "Step back") that fire when last session is Fair/Bad below DP. Picking step-back marks the prior session as a regression on Begin. |
+| `<Home>` | ~1385–1600 | Home screen. Hero kind subcaption uses `items-start` with the icon fixed at top so wrapped reason text doesn't drag the icon to vertical-center. Renders the red **inactivity tile** (when `suggestion.kind === 'inactivity'`) above the goal-reached green tile. **Keep it terse — every change here goes through review.** |
+| `<Setup>` | ~1600–1830 | Pre-session screen. Includes the **verify-best dialog cards** (two cards: "Try your best again" / "Step back") that fire when last session is Fair/Bad below DP. Picking step-back marks the prior session as a regression on Begin. Passes `suggestionKind` through so `handleBeginSession` can tag inactivity-recovery sessions. |
 | `<SessionView>` | ~1750–1985 | Active session timer/phases. Includes session-tip rotation (advances per phase, shuffled per session), `useAudioKeepalive`, `useWakeLock` |
 | `<Summary>` | ~1985–2050 | Post-session rating + notes screen |
 | `<EditSession>` | ~2050–2195 | Edit existing session record. Preserves the optional `interpretedAs` field through saves. |
@@ -103,7 +103,7 @@ Search for these comment headers (`/* === SECTION === */`) to jump:
 | `<AlgorithmInspector>` + `<ScratchRow>` | ~3060–3310 | Settings → Developer tools → Algorithm. Read-only inspector with state, next, projection, scratch-history editor, per-row regression toggle. Never touches localStorage. |
 | `<TestProfilesView>` | ~3312–3415 | Developer-tools landing page. Adds entry button to `<AlgorithmInspector>`. |
 | `<Onboarding>` | ~3415–3600 | 4–5 step intro. Goal step shows **dual cards on first run** (Current best + Rehearsal goal); single card when re-opened via i icon. |
-| `<App>` (root) | ~3600–end | View routing (incl. `view === 'inspector'`), all top-level state, persistence effects, `handle*` callbacks. `dismissOnboarding` accepts `initialBestSeconds` and seeds session #1 on first run. `handleBeginSession` mutates last session for regression marking when verify-best chooses Step back. |
+| `<App>` (root) | ~3790–end | View routing (incl. `view === 'inspector'`), all top-level state, persistence effects, `handle*` callbacks. `dismissOnboarding` accepts `initialBestSeconds` and seeds session #1 on first run. `handleBeginSession` mutates last session for regression marking when verify-best chooses Step back, and tags the new session `interpretedAs: 'inactivity-recovery'` when starting from an inactivity recommendation strictly below peak. |
 
 When adding new state, the convention is: state lives in `<App>`, wires down via props. Sub-components own only ephemeral UI state (which tab, hover, etc.).
 
@@ -135,6 +135,7 @@ Everything stored as JSON in `localStorage`. Keys:
 - `settings` — `{ notificationsEnabled, volume, growthIntensity, goalSeconds, themeMode, chartAnimSpeed }` (only the raw user pref; the runtime `notificationsEnabled` is gated through the feature flag)
 - `hasInitialized` — `true` after the first ever load. Prevents re-seeding `SEED_HISTORY` over an existing user's data if their history ever goes missing
 - `goalReachedDismissedFor` — number; the `goalSeconds` value at which the user dismissed the "you reached your goal" tile. Re-arms when goalSeconds changes
+- `inactivityDismissedFor` — number; the most-recent `session.number` when the user dismissed the red inactivity tile. Logging any new session changes the most-recent number, so the dismissal expires automatically on the next gap
 - `onboardingDismissed` — boolean
 
 **Session record:**
@@ -146,7 +147,10 @@ Everything stored as JSON in `localStorage`. Keys:
   rehearsalSeconds: number,
   notes: string,
   rating: 1 | 2 | 3 | 4 | null,         // 1=Great, 2=Good, 3=Fair, 4=Bad, null=unrated
-  interpretedAs?: 'regression',          // optional: explicit user signal that drops DP
+  interpretedAs?: 'regression' | 'inactivity-recovery',
+  // 'regression' → user-marked, drops DP via demonstratedPeak
+  // 'inactivity-recovery' → set automatically when a session is started
+  //   from an inactivity recommendation. Triggers the bridge step next.
 }
 ```
 
@@ -154,26 +158,33 @@ Everything stored as JSON in `localStorage`. Keys:
 
 `interpretedAs: 'regression'` is set by the verify-best dialog when the user picks "Step back" — it's the only way `demonstratedPeak()` lowers DP. Reversible by editing the session record (the field is preserved through `EditSession` saves).
 
+`interpretedAs: 'inactivity-recovery'` is set by `handleBeginSession` when the user starts a session from an `'inactivity'` recommendation strictly below peak. The marker doesn't affect DP; it just tells `computeNextRehearsal` to suggest the bridge step on the *next* session. The Edit screen has no dedicated toggle, but the field round-trips through saves like `'regression'` does.
+
 ---
 
 ## Algorithm core
 
 The dog's **demonstrated best (DP)** is the longest session he's rated Great or Good. `demonstratedPeak(sorted)` walks history forward, raising DP on each Great/Good and dropping it only when a session has `interpretedAs: 'regression'` set. Without that explicit marking, Fair/Bad ratings don't touch DP. (User-facing copy says "best" / "best session"; `demonstratedPeak` stays as the internal name for code clarity.)
 
-`computeNextRehearsal(history, opts)` returns `{ seconds, reason, kind, alternative?, currentPeak? }`. Kinds:
+`computeNextRehearsal(history, opts)` returns `{ seconds, reason, kind, alternative?, currentPeak?, daysSince? }`. Branches check in this priority order:
 
-- `'fresh'` — first session ever, suggests 5min
-- `'verify-peak'` — last rated Fair/Bad strictly *below* DP, not yet marked as regression. Default `seconds` is DP itself ("try your best again"). The `alternative` field carries a recalibrate path: `{ seconds, reason, kind: 'step-back' | 'repeat', newPeak }`. The Setup screen surfaces both as cards.
-- `'step-back'` — last rated Bad and not below DP (or DP=0). 60% of last duration, floored at 60s.
-- `'repeat'` — last rated Fair and not below DP. Same duration.
-- `'shake-up'` — auto-fired when last 3 sessions are all acceptable AND increasing. ~65% of recent average. Manual via `forceShakeUp: true`.
-- `'step-up'` — happy path. **Basis is `max(lastSecs, peakSecs)`** (Flavor A) — a casual short success doesn't reset progression, the dog has already demonstrated longer. Increments via `stepUpIncrement(basis, rating)`; past 40 min and 60 min they grow more aggressive. Sub-5min always uses 30s increments regardless of rating (smaller would round to zero after growth-intensity scaling).
+1. **`forceShakeUp`** (manual override from Setup) — shake-up regardless.
+2. **`'inactivity'`** — `daysSince ≥ 7` and DP > 0. Tiered reduction: 60% (7–13 days), 50% (14–29), 35% (30+). Includes `daysSince` and `currentPeak` for UI.
+3. **`'inactivity-bridge'`** — last session was marked `interpretedAs: 'inactivity-recovery'`, rated acceptably, and below peak. Seconds = halfway between recovery length and peak. (Bounded to "recent" implicitly: if `daysSince ≥ 7` again, the inactivity branch fires first instead.)
+4. **`'verify-peak'`** — last rated Fair/Bad strictly *below* DP, not yet marked as regression. Default `seconds` is DP itself ("try your best again"). The `alternative` field carries a recalibrate path: `{ seconds, reason, kind: 'step-back' | 'repeat', newPeak }`. The Setup screen surfaces both as cards.
+5. **`'step-back'`** — last rated Bad and not below DP (or DP=0). 60% of last duration, floored at 60s.
+6. **`'repeat'`** — last rated Fair and not below DP. Same duration.
+7. **`'shake-up'`** (auto) — last 3 sessions all acceptable AND increasing. ~65% of recent average.
+8. **`'step-up'`** — happy path. **Basis is `max(lastSecs, peakSecs)`** (Flavor A) — a casual short success doesn't reset progression, the dog has already demonstrated longer. Increments via `stepUpIncrement(basis, rating)`; past 40 min and 60 min they grow more aggressive. Sub-5min always uses 30s increments regardless of rating (smaller would round to zero after growth-intensity scaling).
+9. **`'fresh'`** — first session ever, suggests 5min (handled by the empty-history early-return).
 
 **Regression-marking flow.** When a Fair/Bad lands below DP, the next time the user opens Setup they see the verify-best dialog: "Try your best again" (default — DP unchanged) or "Step back" (recalibrate). Picking Step back sets `interpretedAs: 'regression'` on the prior session at Begin time. `demonstratedPeak()` then drops DP to the highest Great/Good *strictly shorter than* the regressed session, or 0 if none exists. Reversible by editing the session record.
 
 **Bad above DP, Fair above DP, success below DP** all leave DP unchanged. The only way DP drops is the explicit regression marking.
 
 **Onboarding seeds DP on first run.** When a user completes onboarding with no prior history, the dual-card goal step asks for a "Current best." On close, `dismissOnboarding(initialBestSeconds)` writes a synthetic session #1 with rating 1 and that duration, giving the algorithm a starting DP to build from.
+
+**Inactivity recovery flow.** When the user is gone 7+ days the algorithm returns `'inactivity'` (a tiered reduction of peak) and Home shows a red attention tile with Start session + Dismiss CTAs (mirroring the green goal-reached tile). On Begin, `handleBeginSession` tags the session `interpretedAs: 'inactivity-recovery'` *if* the chosen duration is strictly below current peak. The following session then comes back as `'inactivity-bridge'` (halfway to peak), after which normal step-up resumes from peak. If the recovery is rated Fair/Bad below peak, the bridge is skipped and `'verify-peak'` fires instead — letting the user recalibrate peak downward via the existing regression-marking flow (the safety net for "the dog has actually regressed during the gap"). `simulateProjection` also marks synthetic recovery sessions so the dashed projection line dips → bridges → climbs past peak.
 
 `growthIntensity` (Settings → Growth Intensity, slow/typical/fast) multiplies the increment by 0.5 / 1.0 / 1.5.
 
@@ -232,9 +243,11 @@ Some changes go straight to main when they're small and obviously correct.
 
 ---
 
-## Most-recent state (as of 2026-05-04)
+## Most-recent state (as of 2026-05-17)
 
-- All branches merged. `main` is at `b1407ba`.
+- All branches merged. `main` is at `6eb55bf`.
+- **Inactivity recovery shipped.** 7+ day gap → `'inactivity'` kind with tiered reduction (60% / 50% / 35% by gap length), followed by an `'inactivity-bridge'` step the next session. Red attention tile on Home (mirrors goal-reached pattern). Verify-best dialog covers the "dog actually regressed" case if recovery is rated Fair/Bad. New `interpretedAs: 'inactivity-recovery'` marker on sessions; new `inactivityDismissedFor` storage key keyed on `last.number`. See Algorithm core.
+- **Home hero subcaption rewrap.** Icon now `items-start` aligned with `marginTop: 3` instead of `items-center`, so wrapped reason text doesn't drag the icon to vertical-middle. Label uses `whitespace-nowrap`, dot rides with surrounding text — no more dangling separators.
 - **Algorithm reworked to the demonstrated-best (DP) model.** Step-up basis = `max(lastSecs, peakSecs)`. Verify-best dialog on Setup when Fair/Bad lands below DP. The only way DP drops is an explicit `interpretedAs: 'regression'` marking — see Algorithm core above.
 - **Onboarding's goal step shows dual cards on first run** (Current best + Rehearsal goal). Picking a Current best seeds session #1 as a Great-rated baseline so the algorithm has a starting DP. Re-opening the guide via the i icon (post-history) shows the original single-goal step.
 - **Algorithm inspector dev tool** at Settings → Developer tools → Algorithm: state (DP, last), next session, next 10 projected with reasons, scratch-history editor with per-row "mark as regression" toggle. Read-only — never touches localStorage.
