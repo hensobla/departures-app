@@ -1420,13 +1420,15 @@ function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSecon
           >
             {formatTimeLong(nextRehearsalSeconds)}
           </div>
-          <div className="mt-2 flex items-center gap-1.5 text-xs" style={{ color: 'var(--ink-soft)' }}>
-            <KindIcon size={12} style={{ color: kindMeta.color }} />
-            <span className="uppercase tracking-wider" style={{ color: kindMeta.color, fontWeight: 500 }}>
-              {kindMeta.label}
-            </span>
-            <span style={{ color: 'var(--ink-muted)' }}>·</span>
-            <span className="serif italic">{suggestion?.reason}</span>
+          <div className="mt-2 flex items-start gap-1.5 text-xs leading-snug" style={{ color: 'var(--ink-soft)' }}>
+            <KindIcon size={12} style={{ color: kindMeta.color, marginTop: 3, flexShrink: 0 }} />
+            <div>
+              <span className="uppercase tracking-wider whitespace-nowrap" style={{ color: kindMeta.color, fontWeight: 500 }}>
+                {kindMeta.label}
+              </span>
+              <span style={{ color: 'var(--ink-muted)' }}>{' · '}</span>
+              <span className="serif italic">{suggestion?.reason}</span>
+            </div>
           </div>
         </div>
 
