@@ -256,6 +256,18 @@ function ymdLocal(d) {
   return `${y}-${m}-${day}`;
 }
 
+// Whole-day diff between two YYYY-MM-DD strings (parsed as local midnight),
+// tolerant of full ISO timestamps via slice(0,10). Returns ymdB - ymdA, so
+// passing (lastSession, today) gives a positive "days since".
+function daysBetweenYmd(ymdA, ymdB) {
+  if (!ymdA || !ymdB) return 0;
+  const parse = (s) => {
+    const [y, m, d] = s.slice(0, 10).split('-').map(Number);
+    return new Date(y, m - 1, d);
+  };
+  return Math.round((parse(ymdB) - parse(ymdA)) / 86400000);
+}
+
 // Set of YYYY-MM-DD strings for any day with at least one session.
 function buildSessionDaySet(history) {
   const set = new Set();
@@ -441,6 +453,50 @@ function computeNextRehearsal(history, opts = {}) {
     };
   }
 
+  // Inactivity: ease back in after a week or more away. Reduction is tiered
+  // by gap length — a short break warrants a small dip, a long one a deeper
+  // one (the dog may have genuinely lost capacity). Requires an established
+  // peak; otherwise we have no anchor to scale against and fall through to
+  // normal logic. The recovery session is marked `interpretedAs:
+  // 'inactivity-recovery'` when it's logged, which triggers the bridge
+  // branch below for the *next* session — but only while the recovery
+  // itself is still recent; another long gap re-enters inactivity here.
+  const todayYmd = ymdLocal(new Date());
+  const lastYmd = last.date ? last.date.slice(0, 10) : todayYmd;
+  const daysSince = daysBetweenYmd(lastYmd, todayYmd);
+  if (daysSince >= 7 && peakSecs > 0) {
+    const factor = daysSince >= 30 ? 0.35 : daysSince >= 14 ? 0.5 : 0.6;
+    const seconds = Math.max(60, roundDuration(peakSecs * factor));
+    return {
+      seconds,
+      reason: `${daysSince} days since your last session — start with a shorter rehearsal.`,
+      kind: 'inactivity',
+      daysSince,
+      currentPeak: peakSecs,
+    };
+  }
+
+  // Inactivity bridge: the most recent session was a recovery (rated
+  // acceptably and below peak) AND it was recent. Take one step halfway
+  // to peak before resuming normal step-up, so we don't snap back from
+  // 50% straight to peak. If the recovery was rated Fair/Bad, this
+  // branch is skipped and verify-peak (below) handles it instead — the
+  // user can then choose to recalibrate peak downward.
+  if (
+    last.interpretedAs === 'inactivity-recovery' &&
+    isAcceptable(last.rating) &&
+    peakSecs > 0 &&
+    last.rehearsalSeconds < peakSecs
+  ) {
+    const bridge = Math.max(60, roundDuration((last.rehearsalSeconds + peakSecs) / 2));
+    return {
+      seconds: bridge,
+      reason: `Bridge back toward your best (${formatTime(peakSecs)}).`,
+      kind: 'inactivity-bridge',
+      currentPeak: peakSecs,
+    };
+  }
+
   // Verify-peak scenario: last session was Fair/Bad strictly *below* the
   // demonstrated peak, and the user hasn't yet marked it as a regression.
   // The algorithm can't tell from one data point whether this is a fluke
@@ -581,6 +637,7 @@ function simulateProjection(history, goalSeconds, maxSteps = Infinity, opts = {}
         rating: 1,
         warmUps: [],
         date: new Date().toISOString(),
+        ...(next.kind === 'inactivity' ? { interpretedAs: 'inactivity-recovery' } : {}),
       },
     ];
   }
@@ -1306,12 +1363,14 @@ function CalendarView({ history, onBack }) {
    HOME
    ===================================================================== */
 const HOME_KIND_META = {
-  'step-up':     { Icon: TrendingUp,   label: 'step up',         color: 'var(--sage)' },
-  'step-back':   { Icon: TrendingDown, label: 'step back',       color: 'var(--amber)' },
-  'shake-up':    { Icon: Shuffle,      label: 'shake-up',        color: 'var(--gold)' },
-  'repeat':      { Icon: RotateCcw,    label: 'repeat',          color: 'var(--amber)' },
-  'verify-peak': { Icon: Target,       label: 'verify best',     color: 'var(--clay)' },
-  'fresh':       { Icon: Play,         label: 'first session',   color: 'var(--ink-muted)' },
+  'step-up':           { Icon: TrendingUp,   label: 'step up',         color: 'var(--sage)' },
+  'step-back':         { Icon: TrendingDown, label: 'step back',       color: 'var(--amber)' },
+  'shake-up':          { Icon: Shuffle,      label: 'shake-up',        color: 'var(--gold)' },
+  'repeat':            { Icon: RotateCcw,    label: 'repeat',          color: 'var(--amber)' },
+  'verify-peak':       { Icon: Target,       label: 'verify best',     color: 'var(--clay)' },
+  'fresh':             { Icon: Play,         label: 'first session',   color: 'var(--ink-muted)' },
+  'inactivity':        { Icon: CalendarIcon, label: 'ease back',       color: 'var(--brick)' },
+  'inactivity-bridge': { Icon: CalendarIcon, label: 'bridge',          color: 'var(--amber)' },
 };
 
 // Speed presets exposed via the dev tool below the chart on the home tile.
@@ -1326,6 +1385,7 @@ function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSecon
                 onStart, onHistory, onShowOnboarding, onSettings, onCalendar, growthIntensity = 'typical',
                 resumable, onResume, onDiscardActive,
                 showGoalReachedRec, onUpdateGoal, onDismissGoalReached,
+                showInactivityRec, onDismissInactivity,
                 chartAnimSpeed = 'fast' }) {
   const hasHistory = history && history.length > 0;
   const projection = hasHistory ? simulateProjection(history, goalSeconds, 5, { growthIntensity }) : [];
@@ -1369,6 +1429,48 @@ function Home({ nextRehearsalSeconds, nextNumber, suggestion, history, goalSecon
             <span className="serif italic">{suggestion?.reason}</span>
           </div>
         </div>
+
+        {/* Inactivity recommendation. Shows when the user has been away
+            7+ days and the algorithm has shortened the next rehearsal.
+            Dismissal is keyed on the last session's number, so logging
+            any new session naturally re-arms the tile for a future gap. */}
+        {showInactivityRec && suggestion?.kind === 'inactivity' && (
+          <div
+            className="card p-4 mb-4"
+            style={{ borderColor: 'var(--brick)' }}
+          >
+            <div className="flex items-start gap-3 mb-3">
+              <div
+                className="rounded-full flex items-center justify-center shrink-0"
+                style={{ width: 32, height: 32, background: 'var(--brick)' }}
+              >
+                <CalendarIcon size={16} strokeWidth={2.5} style={{ color: 'var(--on-clay)' }} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm mb-1" style={{ color: 'var(--ink)', fontWeight: 500 }}>
+                  {suggestion.daysSince} days since your last session.
+                </div>
+                <div className="text-xs leading-snug" style={{ color: 'var(--ink-soft)' }}>
+                  We've shortened your next rehearsal to {formatTime(suggestion.seconds)} to ease back in. You'll bridge back toward {formatTime(suggestion.currentPeak)} over the next session or two.
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={onStart}
+                className="btn-primary flex-1 py-2 rounded-full text-sm"
+              >
+                Start session
+              </button>
+              <button
+                onClick={onDismissInactivity}
+                className="btn-secondary px-4 py-2 rounded-full text-sm"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Goal-reached recommendation. Shows when the user has hit their
             current goal (peak acceptable session ≥ goalSeconds) and they
@@ -1569,12 +1671,14 @@ function Setup({ nextNumber, suggestion, onBack, onStart, shakeUpSuggestion }) {
 
   // Icon + accent color for suggestion kind
   const kindMeta = {
-    'step-up':     { Icon: TrendingUp,   color: 'var(--sage)' },
-    'step-back':   { Icon: TrendingDown, color: 'var(--amber)' },
-    'shake-up':    { Icon: Shuffle,      color: 'var(--gold)' },
-    'repeat':      { Icon: RotateCcw,    color: 'var(--amber)' },
-    'verify-peak': { Icon: Target,       color: 'var(--clay)' },
-    'fresh':       { Icon: Play,         color: 'var(--ink-muted)' },
+    'step-up':           { Icon: TrendingUp,   color: 'var(--sage)' },
+    'step-back':         { Icon: TrendingDown, color: 'var(--amber)' },
+    'shake-up':          { Icon: Shuffle,      color: 'var(--gold)' },
+    'repeat':            { Icon: RotateCcw,    color: 'var(--amber)' },
+    'verify-peak':       { Icon: Target,       color: 'var(--clay)' },
+    'fresh':             { Icon: Play,         color: 'var(--ink-muted)' },
+    'inactivity':        { Icon: CalendarIcon, color: 'var(--brick)' },
+    'inactivity-bridge': { Icon: CalendarIcon, color: 'var(--amber)' },
   }[currentSuggestion.kind] || { Icon: TrendingUp, color: 'var(--ink-muted)' };
   const { Icon: KindIcon, color: kindColor } = kindMeta;
 
@@ -1734,7 +1838,7 @@ function Setup({ nextNumber, suggestion, onBack, onStart, shakeUpSuggestion }) {
       <div className="px-6 pb-6 pt-4" style={{ background: 'linear-gradient(to top, var(--bg) 70%, transparent)' }}>
         <button
           disabled={!goalValid || warmUps.length === 0}
-          onClick={() => onStart({ number: nextNumber, warmUps, rehearsalSeconds: goalSeconds, notes, interpretLastAsRegression: recalibrate })}
+          onClick={() => onStart({ number: nextNumber, warmUps, rehearsalSeconds: goalSeconds, notes, interpretLastAsRegression: recalibrate, suggestionKind: suggestion.kind })}
           className="btn-primary w-full py-4 rounded-full text-base"
         >
           Begin session
@@ -2464,12 +2568,14 @@ const CHART_RANGES = [
 ];
 
 const KIND_LABEL = {
-  'step-up':     'step up',
-  'step-back':   'step back',
-  'shake-up':    'shake-up',
-  'repeat':      'repeat',
-  'verify-peak': 'verify best',
-  'fresh':       'start',
+  'step-up':           'step up',
+  'step-back':         'step back',
+  'shake-up':          'shake-up',
+  'repeat':            'repeat',
+  'verify-peak':       'verify best',
+  'fresh':             'start',
+  'inactivity':        'ease back',
+  'inactivity-bridge': 'bridge',
 };
 
 /**
@@ -3270,6 +3376,8 @@ function AlgorithmInspector({ history, growthIntensity, goalSeconds, onBack }) {
     : k === 'step-back' ? 'var(--brick)'
     : k === 'repeat' ? 'var(--amber)'
     : k === 'verify-peak' ? 'var(--clay)'
+    : k === 'inactivity' ? 'var(--brick)'
+    : k === 'inactivity-bridge' ? 'var(--amber)'
     : 'var(--ink-muted)';
   const kindText = (k) => KIND_LABEL[k] || k;
 
@@ -3811,6 +3919,10 @@ export default function App() {
   // user changes the goal and reaches the new one, since the stored
   // value won't match the new goalSeconds.
   const [goalReachedDismissedFor, setGoalReachedDismissedFor] = useState(null);
+  // Persisted as the session.number that was most recent when the user
+  // dismissed the inactivity tile. Logging any new session changes the
+  // most-recent number, so the tile re-arms automatically for a future gap.
+  const [inactivityDismissedFor, setInactivityDismissedFor] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState(null);
@@ -3901,6 +4013,9 @@ export default function App() {
 
     const dismissedFor = storageGet('goalReachedDismissedFor');
     if (typeof dismissedFor === 'number') setGoalReachedDismissedFor(dismissedFor);
+
+    const inactivityDismissed = storageGet('inactivityDismissedFor');
+    if (typeof inactivityDismissed === 'number') setInactivityDismissedFor(inactivityDismissed);
 
     setLoaded(true);
   }, []);
@@ -4022,6 +4137,16 @@ export default function App() {
       setHistory(updatedHistory);
       storageSetWithBackup('history', updatedHistory);
     }
+    // If the suggestion was the inactivity ease-back and the user kept
+    // it strictly below peak, tag the resulting session so the next one
+    // gets the bridge step. Skipping the mark when they bumped to/past
+    // peak avoids a stalled bridge that would just suggest peak again.
+    const sortedForPeak = [...history].sort((a, b) => a.number - b.number);
+    const peakNow = demonstratedPeak(sortedForPeak);
+    const isInactivityRecovery =
+      draft.suggestionKind === 'inactivity' &&
+      peakNow > 0 &&
+      draft.rehearsalSeconds < peakNow;
     const phases = buildPhases(draft.warmUps, draft.rehearsalSeconds);
     const session = {
       number: draft.number,
@@ -4035,6 +4160,7 @@ export default function App() {
       pausedRemaining: null,
       completedPhases: [],
       createdAt: Date.now(),
+      ...(isInactivityRecovery ? { interpretedAs: 'inactivity-recovery' } : {}),
     };
     setActiveSession(session);
     storageSet('active', session);
@@ -4089,6 +4215,7 @@ export default function App() {
       rehearsalSeconds: activeSession.rehearsalSeconds,
       notes,
       rating,
+      ...(activeSession.interpretedAs ? { interpretedAs: activeSession.interpretedAs } : {}),
     };
     const newHistory = [...history, record];
     setHistory(newHistory);
@@ -4231,6 +4358,24 @@ export default function App() {
     storageSet('goalReachedDismissedFor', goalSeconds);
   };
 
+  // Inactivity tile: visible when computeNextRehearsal returned the
+  // 'inactivity' kind and the user hasn't dismissed for the current
+  // most-recent session number. Logging a new session changes that
+  // number, so the dismissal expires automatically on the next gap.
+  const mostRecentSessionNumber = (history && history.length > 0)
+    ? Math.max(...history.map(s => s.number))
+    : null;
+  const showInactivityRec =
+    autoSuggestion.kind === 'inactivity' &&
+    mostRecentSessionNumber !== null &&
+    inactivityDismissedFor !== mostRecentSessionNumber;
+
+  const handleDismissInactivity = () => {
+    if (mostRecentSessionNumber === null) return;
+    setInactivityDismissedFor(mostRecentSessionNumber);
+    storageSet('inactivityDismissedFor', mostRecentSessionNumber);
+  };
+
   const handleUpdateGoalFromHome = () => {
     // Send the user to History where the goal editor lives.
     setView('history');
@@ -4290,6 +4435,8 @@ export default function App() {
             showGoalReachedRec={showGoalReachedRec}
             onUpdateGoal={handleUpdateGoalFromHome}
             onDismissGoalReached={handleDismissGoalReached}
+            showInactivityRec={showInactivityRec}
+            onDismissInactivity={handleDismissInactivity}
             chartAnimSpeed={chartAnimSpeed}
           />
         ) : view === 'settings' ? (
